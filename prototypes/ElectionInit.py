@@ -18,7 +18,7 @@ ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH
 
 #The actual election is run on the blockchain, so I'll call this class the Election Initializer
 class ElectionInit():
-    def __init__(self, program_id, client, admin_keypair, title, start_ts, end_ts, voters, candidates):
+    def __init__(self, program_id, client, admin_keypair, title, start_ts, end_ts, voters, weights, candidates):
         self.program_id = program_id
         self.admin_keypair = admin_keypair
         self.title = title
@@ -49,18 +49,18 @@ class ElectionInit():
         ix = []
         ix.append(Instruction(program_id, ix_data, accounts))
 
-        for voter in voters:
-            ix.append(voter.register_voter(program_id, admin_keypair.pubkey(), voter.keypair.pubkey(), title))
+        for voter in voters and for weight in weights:
+            ix.append(voter.register_voter(program_id, admin_keypair.pubkey(), voters[voter].keypair.pubkey(), title, weights[voters]))
 
         tx_signature = self.send_and_confirm(client, admin_keypair, ix)
         
         
     
-        # # 3. Create the link
-        # explorer_link = f"https://explorer.solana.com/tx/{tx_signature}?cluster=devnet"
+        # 3. Create the link
+        explorer_link = f"https://explorer.solana.com/tx/{tx_signature}?cluster=devnet"
         
-        # print(f"✅ Election Successfully Initialized!")
-        # print(f"🔗 Proof: {explorer_link}")
+        print(f"✅ Election Successfully Initialized!")
+        print(f"🔗 Proof: {explorer_link}")
 
 
     def get_discriminator(self, name):

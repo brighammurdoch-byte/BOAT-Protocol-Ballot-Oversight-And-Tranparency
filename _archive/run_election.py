@@ -88,12 +88,14 @@ def main():
 
     #Initialize list of voters.
     voter_ls = []
+    weight_ls = []
     for person in range(5):
         voter_ls.append(Voter())
+        weight_ls.append(person)
 
 
     #Initialize Election
-    my_election = ElectionInit(PROGRAM_ID, client, admin_keypair, election_title, start_time, end_time, voter_ls, candidate_ls)
+    my_election = ElectionInit(PROGRAM_ID, client, admin_keypair, election_title, start_time, end_time, voter_ls, weight_ls, candidate_ls)
 
 
 main()

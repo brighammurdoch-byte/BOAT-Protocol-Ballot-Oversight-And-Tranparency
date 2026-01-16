@@ -98,14 +98,14 @@ class Voter():
         return Instruction(program_id, ix_data, accounts)
 
     #Register to vote for the specific election on the blockchain.
-    def register_voter(self, program_id, admin_pubkey, voter_pubkey, title):
+    def register_voter(self, program_id, admin_pubkey, voter_pubkey, title, weight = 1):
         # Derive Addresses
         election_pda = self.derive_pda(program_id, [b"election", bytes(admin_pubkey), title.encode()])
         mint_pda = self.derive_pda(program_id, [b"mint", bytes(election_pda)])
         voter_ata = get_associated_token_address(self.keypair.pubkey(), mint_pda, TOKEN_2022_PROGRAM_ID)
         
         # Discriminator + Weight (1 vote)
-        ix_data = self.get_discriminator("register_voter") + struct.pack("<Q", 1)
+        ix_data = self.get_discriminator("register_voter") + struct.pack("<Q", weight)
 
         accounts = [
             AccountMeta(pubkey=admin_pubkey, is_signer=True, is_writable=True),

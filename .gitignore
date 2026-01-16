@@ -1,7 +1,50 @@
-.anchor
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node/JS/TS
+node_modules/
+npm-debug.log
+yarn-error.log
+dist/
+build/
+.next/
+coverage/
+
+# Rust/Cargo
+target/
+debug/
+Cargo.lock  # ← comment out if you want to commit for reproducibility
+
+# Anchor/Solana specific
+.anchor/
+test-ledger/
+deploy-logs.txt  # sometimes generated
+
+# Secrets & sensitive
+.env
+.env.local
+.env.*
+admin.json
+*.pem
+*.key
+*.p12
+*.cert
+wallet.json  # common for dev wallets
+*.sol  # sometimes used for keypairs
+
+# MacOS / OS junk
 .DS_Store
-target
-**/*.rs.bk
-node_modules
-test-ledger
-.yarn
+Thumbs.db
+
+# Editor/IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Optional: if you have frontend builds or other
+*.log
+temp/
