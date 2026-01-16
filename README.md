@@ -26,5 +26,3 @@
 - **Backend**: Rust (via Anchor/Cargo)
 - **Frontend/CLI**: TypeScript/JavaScript (Node.js, Yarn)
 - **Other**: Python (prototypes & utils), JSON configs (admin, SBT minting)
-
-## Project Structure
