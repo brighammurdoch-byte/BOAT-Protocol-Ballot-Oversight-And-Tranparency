@@ -17,11 +17,11 @@ from solders.system_program import ID as SYS_PROGRAM_ID
 client = Client("https://api.devnet.solana.com")
 
 # 2. YOUR Specific Program ID (From your deployment log)
-PROGRAM_ID = Pubkey.from_string("CkJ6i5xKmCqriFoqEFA4LPupK9W67zrLf2uBAXRG7uzH")
+PROGRAM_ID = Pubkey.from_string("EWatwsCrcnLninbUQV6yJzFreJHVhCnSm6LxB7aooHvg")
 
 # 3. Load Admin Wallet
 # Using the absolute path we found earlier to be safe
-with open("/home/ubuntu/data5500_mycode/final_project/boat_final/admin.json", "r") as f:
+with open("admin.json", "r") as f:
     admin_keypair = Keypair.from_bytes(json.load(f))
 
 print(f"🚀 Connected to Program: {PROGRAM_ID}")
@@ -47,7 +47,7 @@ def pack_string(s):
 def main():
     # This line must be changed for every election or else you will get an error. Each election 
     # must have a new name or else the app will read it as having already been created.
-    election_title = "Class Vice President 2027"
+    election_title = f"Class Vice President {int(time.time())}"
     delay = 10
     
     # --- Step 1: Create Election ---

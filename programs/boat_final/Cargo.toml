@@ -11,7 +11,6 @@ name = "boat_final"
 [features]
 default = []
 cpi = ["no-entrypoint"]
-default-features = []
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
@@ -20,4 +19,4 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dependencies]
 anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
 anchor-spl = { version = "0.30.1", features = ["metadata"] }
-solana-program = "1.18.0"
+blake3 = "=1.5.0"

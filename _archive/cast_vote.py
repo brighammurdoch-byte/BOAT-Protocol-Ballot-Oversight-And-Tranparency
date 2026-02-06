@@ -9,7 +9,6 @@ from solders.instruction import Instruction, AccountMeta
 from solders.transaction import Transaction
 from solders.message import Message
 from solders.system_program import ID as SYS_PROGRAM_ID
-from spl.token.instructions import get_associated_token_address
 from Voter import Voter
 from ElectionInit import ElectionInit
 from Candidate import Candidate
@@ -86,9 +85,10 @@ def main():
     # Make a voter
     Andy = Voter()
     voter_ls = [Andy]
+    weights = [1] # Assign 1 vote weight to Andy
 
     # 4. Build and Send
-    big_election = ElectionInit(PROGRAM_ID, client, admin_kp, title, start_time, end_time, voter_ls, candidate)
+    big_election = ElectionInit(PROGRAM_ID, client, admin_kp, title, start_time, end_time, voter_ls, weights, candidate)
 
     delay = 10
     print("⏳ Waiting " + str(delay) + " seconds for blockchain confirmation...") #Had to add wait for blockchain to catch up

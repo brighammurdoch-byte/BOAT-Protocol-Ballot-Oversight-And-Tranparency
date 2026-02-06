@@ -7,12 +7,34 @@ use anchor_spl::{
 
 // ⚠️ REPLACE THIS WITH YOUR NEW PROGRAM ID
 // (The one starting with 3Arq... that you saw in the logs)
-declare_id!("4Gu2ktcq8wjcwA2MdxsKLdrffxkDm1MWY6gK44SymRwP");
+declare_id!("EWatwsCrcnLninbUQV6yJzFreJHVhCnSm6LxB7aooHvg");
 
+/// # BOAT Protocol (Ballot Oversight and Transparency)
+///
+/// This smart contract acts as a digital, immutable ballot box for corporate governance and elections.
+///
+/// ## Core Financial Concepts for Finance Students
+/// 1. **The Mint (Ballot Printer):** When an election is created, a unique "Mint" is established.
+///    Think of this as a central bank for a specific election that issues "Voting Rights" tokens.
+///
+/// 2. **Registration (Issuance):** The election administrator "mints" (issues) tokens to eligible voters.
+///    - 1 Token = 1 Vote (or weighted voting power, e.g., 1 share = 1 vote).
+///    - These tokens act as "Bearer Assets" for the right to vote.
+///
+/// 3. **Voting (Redemption):** To cast a vote, the voter must "burn" (destroy) their token.
+///    - This ensures **Double-Spending Protection**: You cannot vote twice because your "voting right"
+///      asset is destroyed in the process of voting.
+///    - The vote is recorded permanently on the blockchain (the public ledger).
 #[program]
 pub mod boat_final {
     use super::*;
 
+    /// ## Initialize Election
+    /// Sets up the governance parameters (Corporate Charter for this vote).
+    ///
+    /// - **Authority:** The entity (e.g., Corporate Secretary) allowed to issue ballots.
+    /// - **Mint:** Creates the cryptographic "printing press" for the voting tokens.
+    /// - **Dates:** Enforces strict start and end times for the voting period.
     pub fn initialize_election(
         ctx: Context<InitializeElection>,
         title: String,
@@ -31,16 +53,24 @@ pub mod boat_final {
         Ok(())
     }
 
+    /// ## Register Voter (Issue Ballot)
+    /// The administrator issues voting power to a specific stakeholder.
+    ///
+    /// - **Minting:** New tokens are created and sent to the voter's digital wallet.
+    /// - **Weight:** Allows for weighted voting (e.g., a shareholder with 100 shares gets 100 voting tokens).
+    ///
+    /// *Financial Analogy:* Issuing stock certificates to shareholders.
     pub fn register_voter(ctx: Context<RegisterVoter>, weight: u64) -> Result<()> {
         // --- FIX IS HERE ---
         // 1. Save the key to a variable so it stays alive
         let authority_key = ctx.accounts.authority.key();
+        let bump = [ctx.accounts.election.bump];
         
         let seeds = &[
             b"election",
             authority_key.as_ref(), // 2. Reference the variable
             ctx.accounts.election.title.as_bytes(),
-            &[ctx.accounts.election.bump],
+            &bump,
         ];
         let signer = &[&seeds[..]];
 
@@ -61,6 +91,14 @@ pub mod boat_final {
         Ok(())
     }
 
+    /// ## Cast Vote (Exercise Right)
+    /// The voter submits their choice, and their voting tokens are destroyed.
+    ///
+    /// - **Burning:** The tokens are removed from circulation. This mathematically guarantees
+    ///   that the same tokens cannot be used again.
+    /// - **Audit Trail:** An event (`VoteCast`) is emitted, acting as a permanent public record.
+    ///
+    /// *Financial Analogy:* Redeeming a coupon or exercising a stock option. Once used, it's gone.
     pub fn cast_vote(ctx: Context<CastVote>, candidate: String) -> Result<()> {
         let election = &ctx.accounts.election;
         let clock = Clock::get()?;
@@ -83,6 +121,8 @@ pub mod boat_final {
             user_weight,
         )?;
 
+        msg!("Vote recorded for: {}", candidate);
+
         emit!(VoteCast {
             voter: ctx.accounts.voter.key(),
             candidate,
@@ -95,6 +135,7 @@ pub mod boat_final {
 
 // --- DATA STRUCTURES ---
 
+/// The "Ballot Box" account storing election metadata.
 #[account]
 pub struct Election {
     pub authority: Pubkey,
@@ -105,6 +146,7 @@ pub struct Election {
     pub bump: u8,
 }
 
+/// The "Ticker Tape" event. This is the public record of a vote being cast.
 #[event]
 pub struct VoteCast {
     pub voter: Pubkey,
@@ -112,12 +154,15 @@ pub struct VoteCast {
     pub weight: u64,
 }
 
+/// Security Context for Initializing an Election
 #[derive(Accounts)]
 #[instruction(title: String)]
 pub struct InitializeElection<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
     
+    // This account is a PDA (Program Derived Address).
+    // It is deterministically derived from "election" + authority + title.
     #[account(
         init,
         payer = authority,
@@ -127,6 +172,7 @@ pub struct InitializeElection<'info> {
     )]
     pub election: Account<'info, Election>,
 
+    // The "Mint" (Token Printer) is also a PDA, owned by the Election account.
     #[account(
         init,
         payer = authority,
@@ -144,6 +190,7 @@ pub struct InitializeElection<'info> {
     pub rent: Sysvar<'info, Rent>,
 }
 
+/// Security Context for Registering a Voter
 #[derive(Accounts)]
 pub struct RegisterVoter<'info> {
     #[account(mut)]
@@ -159,6 +206,7 @@ pub struct RegisterVoter<'info> {
     #[account(mut)]
     pub voter: UncheckedAccount<'info>, 
 
+    // Create a Token Account (Wallet) for the voter to hold their ballot tokens.
     #[account(
         init,
         payer = authority,
@@ -173,6 +221,7 @@ pub struct RegisterVoter<'info> {
     pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
+/// Security Context for Casting a Vote
 #[derive(Accounts)]
 pub struct CastVote<'info> {
     #[account(mut)]

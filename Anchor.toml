@@ -1,18 +1,19 @@
 [toolchain]
+anchor_version = "0.30.1"
 
 [features]
 resolution = true
 skip-lint = false
 
 [programs.devnet]
-boat_final = "4Gu2ktcq8wjcwA2MdxsKLdrffxkDm1MWY6gK44SymRwP"
+boat_final = "EWatwsCrcnLninbUQV6yJzFreJHVhCnSm6LxB7aooHvg"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
 cluster = "Devnet"
-wallet = "/home/ubuntu/data5500_mycode/hw10/boat_final/admin.json"
+wallet = "./app/admin.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""

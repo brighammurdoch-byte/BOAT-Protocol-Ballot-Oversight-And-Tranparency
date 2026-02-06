@@ -10,13 +10,12 @@ from solders.sysvar import RENT
 from solana.rpc.api import Client
 from solders.transaction import Transaction
 from solders.message import Message
-from spl.token.instructions import get_associated_token_address
 from Voter import Voter
 from ElectionInit import ElectionInit
 from Candidate import Candidate
 
 # CONSTANTS
-PROGRAM_ID = Pubkey.from_string("4Gu2ktcq8wjcwA2MdxsKLdrffxkDm1MWY6gK44SymRwP")
+PROGRAM_ID = Pubkey.from_string("EWatwsCrcnLninbUQV6yJzFreJHVhCnSm6LxB7aooHvg")
 ADMIN_KEY_FILE = "admin.json"
 TOKEN_2022_PROGRAM_ID = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")

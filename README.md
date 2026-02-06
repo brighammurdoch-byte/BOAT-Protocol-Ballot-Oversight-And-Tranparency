@@ -26,3 +26,33 @@
 - **Backend**: Rust (via Anchor/Cargo)
 - **Frontend/CLI**: TypeScript/JavaScript (Node.js, Yarn)
 - **Other**: Python (prototypes & utils), JSON configs (admin, SBT minting)
+
+## Setup Instructions (Windows Users)
+To build the smart contract (`anchor build`), you must use **WSL (Windows Subsystem for Linux)**.
+
+1. **Install Ubuntu:**
+   ```powershell
+   wsl --install -d Ubuntu
+   ```
+2. **Reboot your computer.**
+3. **Open Ubuntu** from your Start Menu and run the following commands inside the Linux terminal:
+
+   **A. Install Rust:**
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   # (Type 1 and press Enter when prompted)
+   source "$HOME/.cargo/env"
+   ```
+
+   **B. Install Solana:**
+   ```bash
+   sh -c "$(curl -sSfL https://release.solana.com/v1.18.18/install)"
+   export PATH="/home/$(whoami)/.local/share/solana/install/active_release/bin:$PATH"
+   ```
+
+   **C. Install Anchor:**
+   ```bash
+   cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+   avm install latest
+   avm use latest
+   ```
