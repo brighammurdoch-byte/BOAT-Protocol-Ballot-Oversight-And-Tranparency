@@ -26,6 +26,7 @@ class ElectionInit():
         # 1. Find Addresses (PDAs)
         election_pda = derive_pda(program_id, [b"election", bytes(admin_keypair.pubkey()), title.encode()])
         mint_pda = derive_pda(program_id, [b"mint", bytes(election_pda)])
+        config_pda = derive_pda(program_id, [b"config", bytes(election_pda)])
         
         # 2. Pack Data
         # Discriminator + Title (String) + Start (i64) + End (i64)
@@ -36,6 +37,7 @@ class ElectionInit():
         accounts = [
             AccountMeta(pubkey=admin_keypair.pubkey(), is_signer=True, is_writable=True),
             AccountMeta(pubkey=election_pda, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=config_pda, is_signer=False, is_writable=True),
             AccountMeta(pubkey=mint_pda, is_signer=False, is_writable=True),
             AccountMeta(pubkey=SYS_PROGRAM_ID, is_signer=False, is_writable=False),
             AccountMeta(pubkey=TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),

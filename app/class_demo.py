@@ -1,6 +1,7 @@
 import time
 import json
 import random
+import os
 from solana.rpc.api import Client
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -9,8 +10,8 @@ from ElectionInit import ElectionInit
 from Candidate import Candidate
 
 # --- CONFIGURATION ---
-PROGRAM_ID = Pubkey.from_string("EWatwsCrcnLninbUQV6yJzFreJHVhCnSm6LxB7aooHvg")
-ADMIN_KEY_FILE = "admin.json"
+PROGRAM_ID = Pubkey.from_string("5ZvG5oXKD6YKgWkAKWQMjdAb3vXEWzRNNGk3uRSt63gP")
+ADMIN_KEY_FILE = os.path.join(os.path.dirname(__file__), "admin.json")
 
 def pause(msg="Press Enter to continue..."):
     print(f"\n⏸️  {msg}")
@@ -49,7 +50,7 @@ def tally_votes_from_blockchain(client, election_pda, candidates):
                 for log in logs:
                     if "Vote recorded for: " in log:
                         # Extract candidate name from the log string
-                        voted_name = log.split("Vote recorded for: ")[1].strip()
+                        voted_name = log.split("Vote recorded for: ")[1].split(" from voter:")[0].strip()
                         if voted_name in blockchain_tally:
                             blockchain_tally[voted_name] += 1
                             print(f"   -> ✅ Verified vote on-chain for: {voted_name} (Tx: {str(sig_info.signature)[:8]}...)")

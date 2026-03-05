@@ -2,6 +2,7 @@ import struct
 import hashlib
 import time
 import json
+import os
 from solders.pubkey import Pubkey
 from solders.keypair import Keypair
 from solders.instruction import Instruction, AccountMeta
@@ -15,8 +16,9 @@ from ElectionInit import ElectionInit
 from Candidate import Candidate
 
 # CONSTANTS
-PROGRAM_ID = Pubkey.from_string("EWatwsCrcnLninbUQV6yJzFreJHVhCnSm6LxB7aooHvg")
-ADMIN_KEY_FILE = "admin.json"
+# ⚠️ UPDATE THIS WITH YOUR NEW PROGRAM ID FROM THE DEPLOYMENT LOG
+PROGRAM_ID = Pubkey.from_string("5ZvG5oXKD6YKgWkAKWQMjdAb3vXEWzRNNGk3uRSt63gP")
+ADMIN_KEY_FILE = os.path.join(os.path.dirname(__file__), "admin.json")
 TOKEN_2022_PROGRAM_ID = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
 

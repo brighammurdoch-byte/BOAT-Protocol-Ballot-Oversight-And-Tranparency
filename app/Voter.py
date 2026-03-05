@@ -60,6 +60,8 @@ class Voter():
 
         # 2. Derive Mint Address
         mint_pda = derive_pda(program_id, [b"mint", bytes(election_pda)])
+        config_pda = derive_pda(program_id, [b"config", bytes(election_pda)])
+        voter_registry_pda = derive_pda(program_id, [b"voter_registry", bytes(election_pda), bytes(self.keypair.pubkey())])
         
         # 3. Derive Voter's Token Account
         voter_ata = get_associated_token_address(self.keypair.pubkey(), mint_pda, TOKEN_2022_PROGRAM_ID)
@@ -68,10 +70,14 @@ class Voter():
         
         accounts = [
             AccountMeta(pubkey=self.keypair.pubkey(), is_signer=True, is_writable=True), # Voter (Signer)
+            AccountMeta(pubkey=admin_pubkey, is_signer=False, is_writable=True),         # Fee Receiver (Admin)
             AccountMeta(pubkey=election_pda, is_signer=False, is_writable=True),         # Election
+            AccountMeta(pubkey=config_pda, is_signer=False, is_writable=False),          # Election Config
             AccountMeta(pubkey=mint_pda, is_signer=False, is_writable=True),             # Mint
+            AccountMeta(pubkey=voter_registry_pda, is_signer=False, is_writable=True),   # Voter Registry
             AccountMeta(pubkey=voter_ata, is_signer=False, is_writable=True),            # Token Account
             AccountMeta(pubkey=TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False), # Token Program
+            AccountMeta(pubkey=SYS_PROGRAM_ID, is_signer=False, is_writable=False),      # System Program
         ]
         
         return Instruction(program_id, ix_data, accounts)
@@ -81,6 +87,8 @@ class Voter():
         # Derive Addresses
         election_pda = derive_pda(program_id, [b"election", bytes(admin_pubkey), title.encode()])
         mint_pda = derive_pda(program_id, [b"mint", bytes(election_pda)])
+        config_pda = derive_pda(program_id, [b"config", bytes(election_pda)])
+        voter_registry_pda = derive_pda(program_id, [b"voter_registry", bytes(election_pda), bytes(voter_pubkey)])
         voter_ata = get_associated_token_address(voter_pubkey, mint_pda, TOKEN_2022_PROGRAM_ID)
         
         # Discriminator + Weight (1 vote)
@@ -89,8 +97,10 @@ class Voter():
         accounts = [
             AccountMeta(pubkey=admin_pubkey, is_signer=True, is_writable=True),
             AccountMeta(pubkey=election_pda, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=config_pda, is_signer=False, is_writable=False),
             AccountMeta(pubkey=mint_pda, is_signer=False, is_writable=True),
             AccountMeta(pubkey=voter_pubkey, is_signer=False, is_writable=True), # Voter Wallet
+            AccountMeta(pubkey=voter_registry_pda, is_signer=False, is_writable=True), # Voter Registry
             AccountMeta(pubkey=voter_ata, is_signer=False, is_writable=True),     # Voter Token Account
             AccountMeta(pubkey=SYS_PROGRAM_ID, is_signer=False, is_writable=False),
             AccountMeta(pubkey=TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),
