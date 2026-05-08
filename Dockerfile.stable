@@ -1,0 +1,35 @@
+# A stable Solana development environment
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y build-essential pkg-config libssl-dev libudev-dev git curl wget nodejs npm ca-certificates python3 && rm -rf /var/lib/apt/lists/*
+
+# Install specific Rust version
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.72.0
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# Verify Rust installation
+RUN rustc --version
+
+# Install specific Solana CLI version
+RUN wget https://release.solana.com/v1.17.12/install -O solana-install-latest.sh && \
+    sh solana-install-latest.sh
+ENV PATH="/root/.local/share/solana/install/active_release/bin:$PATH"
+
+# Verify Solana installation
+RUN solana --version
+
+# Install specific Anchor CLI version
+RUN npm install -g @coral-xyz/anchor-cli@0.29.0
+
+# Verify Anchor installation
+RUN anchor --version
+
+# Set working directory
+WORKDIR /workspace
+
+# Default command - provides shell access for building
+CMD ["/bin/bash"]

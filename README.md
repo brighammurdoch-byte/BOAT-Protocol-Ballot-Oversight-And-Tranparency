@@ -19,6 +19,11 @@
 - Potential frontend/client (TypeScript/Node) for user interaction
 - Archived prototypes & Python helpers for testing/experimentation
 
+## Frontend status
+- See `FRONTEND_STATUS.md` for what’s implemented vs pending for:
+  - Web/PWA (`app/boat-frontend`)
+  - Mobile (Expo) (`apps/mobile`)
+
 ## Tech Stack
 - **Blockchain**: Solana
 - **Smart Contract Framework**: Anchor

@@ -51,6 +51,8 @@ class ElectionInit():
             ix.append(voter.register_voter(program_id, admin_keypair.pubkey(), voter.keypair.pubkey(), title, weights[i]))
 
         tx_signature = self.send_and_confirm(client, admin_keypair, ix)
+        if not tx_signature:
+            raise RuntimeError("InitializeElection transaction failed (no signature returned).")
         
         
     

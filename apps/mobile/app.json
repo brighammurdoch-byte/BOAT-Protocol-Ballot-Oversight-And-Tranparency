@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "BOAT",
+    "slug": "boat-mobile",
+    "scheme": "boat",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0f172a"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.boatprotocol.mobile"
+    },
+    "android": {
+      "package": "org.boatprotocol.mobile"
+    }
+  }
+}

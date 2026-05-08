@@ -2,6 +2,7 @@ import time
 import json
 import random
 import os
+import base64
 from solana.rpc.api import Client
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -12,6 +13,50 @@ from Candidate import Candidate
 # --- CONFIGURATION ---
 PROGRAM_ID = Pubkey.from_string("5ZvG5oXKD6YKgWkAKWQMjdAb3vXEWzRNNGk3uRSt63gP")
 ADMIN_KEY_FILE = os.path.join(os.path.dirname(__file__), "admin.json")
+
+def get_balance_sol(client: Client, pubkey: Pubkey) -> float:
+    resp = client.get_balance(pubkey)
+    lamports = resp.value if resp and resp.value is not None else 0
+    return lamports / 1_000_000_000
+
+def ensure_devnet_funds(client: Client, pubkey: Pubkey, min_sol: float = 0.25, top_up_sol: float = 1.0):
+    """
+    Ensures `pubkey` has at least `min_sol` SOL on devnet by requesting an airdrop if needed.
+    """
+    try:
+        bal = get_balance_sol(client, pubkey)
+    except Exception as e:
+        print(f"❌ Couldn't read balance for {str(pubkey)[:8]}... ({e})")
+        print("   This usually means the RPC is down, rate-limiting, or DNS/network is flaky.")
+        return False
+    if bal >= min_sol:
+        print(f"💰 Admin balance: {bal:.4f} SOL")
+        return True
+    lamports = int(top_up_sol * 1_000_000_000)
+    print(f"💸 Low balance for {str(pubkey)[:8]}... ({bal:.4f} SOL). Requesting airdrop of {top_up_sol:.2f} SOL...")
+    try:
+        sig = client.request_airdrop(pubkey, lamports).value
+        print(f"⏳ Airdrop submitted: https://explorer.solana.com/tx/{sig}?cluster=devnet")
+    except Exception as e:
+        print(f"❌ Airdrop failed ({e}). Devnet faucet/RPC is probably rate-limiting.")
+        print("   Fix: fund the demo admin wallet manually from a funded wallet, then rerun.")
+        print(f"   Demo admin pubkey: {pubkey}")
+        print("   Example (from a wallet that has SOL on devnet):")
+        print(f"     solana transfer {pubkey} 1 --url https://api.devnet.solana.com")
+        return False
+    # Poll a bit for confirmation
+    for _ in range(20):
+        time.sleep(1)
+        try:
+            if get_balance_sol(client, pubkey) >= min_sol:
+                break
+        except Exception:
+            pass
+    try:
+        print(f"✅ New balance: {get_balance_sol(client, pubkey):.4f} SOL")
+    except Exception:
+        print("✅ Airdrop submitted; balance check unavailable right now.")
+    return True
 
 def pause(msg="Press Enter to continue..."):
     print(f"\n⏸️  {msg}")
@@ -48,12 +93,20 @@ def tally_votes_from_blockchain(client, election_pda, candidates):
                 logs = (data.get("meta") or {}).get("logMessages") or []
 
                 for log in logs:
-                    if "Vote recorded for: " in log:
-                        # Extract candidate name from the log string
-                        voted_name = log.split("Vote recorded for: ")[1].split(" from voter:")[0].strip()
-                        if voted_name in blockchain_tally:
-                            blockchain_tally[voted_name] += 1
-                            print(f"   -> ✅ Verified vote on-chain for: {voted_name} (Tx: {str(sig_info.signature)[:8]}...)")
+                    # New Protocol parses Anchor Events (Base64) to save gas!
+                    if log.startswith("Program data: "):
+                        b64_data = log.split("Program data: ")[1]
+                        try:
+                            decoded_bytes = base64.b64decode(b64_data)
+                            # For the demo, we do a quick byte-search for the candidate's name 
+                            # inside the decoded Anchor event payload.
+                            for c in candidates:
+                                if c.name.encode('utf-8') in decoded_bytes:
+                                    blockchain_tally[c.name] += 1
+                                    print(f"   -> ✅ Verified Anchor Event on-chain for: {c.name} (Tx: {str(sig_info.signature)[:8]}...)")
+                                    break # Move to next log once found
+                        except Exception:
+                            pass
         
         if sum(blockchain_tally.values()) == 0:
             print("\n   ⚠️  WARNING: Transactions found, but no votes tallied.")
@@ -73,7 +126,7 @@ def main():
 
     # 1. SETUP
     print("⚙️  Setting up environment...")
-    client = Client("https://api.devnet.solana.com")
+    client = Client("https://api.devnet.solana.com", commitment="confirmed")
     
     try:
         with open(ADMIN_KEY_FILE, "r") as f:
@@ -82,6 +135,11 @@ def main():
         print(f"👤 Admin (Professor/Authority): {str(admin_kp.pubkey())[:8]}...")
     except FileNotFoundError:
         print(f"❌ Error: Could not find {ADMIN_KEY_FILE}. Please copy it to the app/ folder.")
+        return
+
+    # Make sure admin can pay rent for accounts (registrations create PDAs + ATAs)
+    print(f"👤 Admin pubkey (from {ADMIN_KEY_FILE}): {admin_kp.pubkey()}")
+    if not ensure_devnet_funds(client, admin_kp.pubkey(), min_sol=0.35, top_up_sol=1.0):
         return
 
     # Define Election Parameters
@@ -103,10 +161,18 @@ def main():
     print("   -> Creating 'SBT Mint' (Voting Rights Printer)")
     
     # We pass empty lists for voters/weights because we want to do registration separately for the demo
-    ElectionInit(PROGRAM_ID, client, admin_kp, title, start_time, end_time, [], [], candidates)
+    # (Re-)check funds right before init; rent needs can vary slightly.
+    if not ensure_devnet_funds(client, admin_kp.pubkey(), min_sol=0.25, top_up_sol=1.0):
+        return
+    try:
+        ElectionInit(PROGRAM_ID, client, admin_kp, title, start_time, end_time, [], [], candidates)
+    except Exception as e:
+        print(f"❌ Initialization failed: {e}")
+        return
     
-    print("⏳ Waiting 20 seconds for election initialization to confirm on blockchain...")
-    time.sleep(20)
+    init_delay = 12
+    print(f"⏳ Waiting {init_delay} seconds for election initialization to confirm on blockchain...")
+    time.sleep(init_delay)
     
     pause("Step 2: Register 5 Voters (Issue Stock/Token)")
 
@@ -120,6 +186,9 @@ def main():
     
     for i, student in enumerate(voters):
         print(f"   -> Registering Student {i+1} ({str(student.keypair.pubkey())[:6]}...)...")
+        # Admin pays fees + rent here; keep topped up as we go.
+        if not ensure_devnet_funds(client, admin_kp.pubkey(), min_sol=0.15, top_up_sol=1.0):
+            return
         register_ix = student.register_voter(
             PROGRAM_ID, 
             admin_kp.pubkey(), 
@@ -128,11 +197,15 @@ def main():
             weight=1
         )
         # Send transaction (Signed by Admin)
-        student.send_and_confirm(client, register_ix, admin_kp, admin_kp)
+        sig = student.send_and_confirm(client, register_ix, admin_kp, admin_kp)
+        if not sig:
+            print("❌ Registration failed; stopping demo so votes aren't attempted with missing registries.")
+            return
         time.sleep(1) # Short pause to avoid RPC rate limits
     
-    print("⏳ Waiting 15 seconds for registrations to confirm...")
-    time.sleep(15)
+    reg_delay = 12
+    print(f"⏳ Waiting {reg_delay} seconds for registrations to confirm...")
+    time.sleep(reg_delay)
 
     pause("Step 3: Cast Votes (Exercise Option/Burn Token)")
 
@@ -153,11 +226,11 @@ def main():
         if vote_ix:
             # Send transaction (Signed by Student)
             student.send_and_confirm(client, vote_ix, student.keypair, admin_kp)
-            # Note: We are NOT updating a local variable here anymore.
-            # We will read the truth from the blockchain in the next step.
+            time.sleep(1) # Prevent RPC rate limits and dropped transactions!
 
-    print("⏳ Waiting 15 seconds for votes to be confirmed by validators...")
-    time.sleep(15)
+    vote_delay = 15
+    print(f"⏳ Waiting {vote_delay} seconds for votes to be confirmed and indexed by validators...")
+    time.sleep(vote_delay)
 
     print("\n📊 ELECTION RESULTS (Verified on Blockchain)")
     print("-" * 30)

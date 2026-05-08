@@ -5,14 +5,6 @@ members = [
 resolver = "2"
 
 [profile.release]
-overflow-checks = true
+overflow-checks = false
 lto = "fat"
 codegen-units = 1
-opt-level = 3
-panic = "abort"
-
-[profile.release.package.solana-program]
-debug = false
-
-[profile.release.package.spl-token-2022]
-opt-level = 3

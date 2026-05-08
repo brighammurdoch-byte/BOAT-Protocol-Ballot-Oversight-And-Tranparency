@@ -1,0 +1,7 @@
+target
+node_modules
+.git
+test-ledger
+.anchor
+*.ps1
+*.sh

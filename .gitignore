@@ -12,11 +12,13 @@ dist/
 build/
 .next/
 coverage/
+.expo/
 
 # Rust/Cargo
 target/
 debug/
-Cargo.lock  # ← comment out if you want to commit for reproducibility
+# Cargo.lock is usually *not* committed for Solana/Anchor projects (toolchain mismatch).
+Cargo.lock
 
 # Anchor/Solana specific
 .anchor/
@@ -34,6 +36,8 @@ admin.json
 *.cert
 wallet.json  # common for dev wallets
 *.sol  # sometimes used for keypairs
+*.keystore
+apps/mobile/package.json.*
 
 # MacOS / OS junk
 .DS_Store

@@ -1,0 +1,269 @@
+{
+  "version": "0.1.0",
+  "name": "boat_final",
+  "address": "5ZvG5oXKD6YKgWkAKWQMjdAb3vXEWzRNNGk3uRSt63gP",
+  "instructions": [
+    {
+      "name": "initializeElection",
+      "accounts": [
+        { "name": "authority", "isMut": true, "isSigner": true },
+        { "name": "election", "isMut": true, "isSigner": false },
+        { "name": "electionConfig", "isMut": true, "isSigner": false },
+        { "name": "sbtMint", "isMut": true, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "rent", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "title", "type": "string" },
+        { "name": "startTime", "type": "i64" },
+        { "name": "endTime", "type": "i64" }
+      ]
+    },
+    {
+      "name": "setElectionConfig",
+      "accounts": [
+        { "name": "authority", "isMut": true, "isSigner": true },
+        { "name": "election", "isMut": false, "isSigner": false },
+        { "name": "electionConfig", "isMut": true, "isSigner": false }
+      ],
+      "args": [
+        { "name": "defaultVoterWeight", "type": "u64" },
+        { "name": "quorumPercentage", "type": "u8" },
+        { "name": "maxFreeVoteChanges", "type": "u8" },
+        { "name": "pricePerVoteChange", "type": "u64" },
+        { "name": "allowDelegation", "type": "bool" }
+      ]
+    },
+    {
+      "name": "setRegistrationPolicy",
+      "accounts": [
+        { "name": "authority", "isMut": true, "isSigner": true },
+        { "name": "election", "isMut": true, "isSigner": false },
+        { "name": "electionConfig", "isMut": true, "isSigner": false }
+      ],
+      "args": [
+        { "name": "registrationMode", "type": "u8" },
+        { "name": "merkleRoot", "type": { "array": ["u8", 32] } },
+        { "name": "registrationEndTs", "type": "i64" },
+        { "name": "maxRegisteredVoters", "type": "u32" },
+        { "name": "registrationFeeLamports", "type": "u64" }
+      ]
+    },
+    {
+      "name": "enableTokenVoting",
+      "accounts": [
+        { "name": "authority", "isMut": true, "isSigner": true },
+        { "name": "election", "isMut": false, "isSigner": false },
+        { "name": "electionConfig", "isMut": true, "isSigner": false },
+        { "name": "tokenMint", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "minTokenBalance", "type": "u64" }]
+    },
+    {
+      "name": "registerVoter",
+      "accounts": [
+        { "name": "authority", "isMut": true, "isSigner": true },
+        { "name": "election", "isMut": true, "isSigner": false },
+        { "name": "electionConfig", "isMut": false, "isSigner": false },
+        { "name": "sbtMint", "isMut": true, "isSigner": false },
+        { "name": "voter", "isMut": true, "isSigner": false },
+        { "name": "voterRegistry", "isMut": true, "isSigner": false },
+        { "name": "voterTokenAccount", "isMut": true, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "weight", "type": "u64" }]
+    },
+    {
+      "name": "registerVoterSponsored",
+      "accounts": [
+        { "name": "authority", "isMut": true, "isSigner": true },
+        { "name": "voter", "isMut": true, "isSigner": true },
+        { "name": "election", "isMut": true, "isSigner": false },
+        { "name": "electionConfig", "isMut": false, "isSigner": false },
+        { "name": "sbtMint", "isMut": true, "isSigner": false },
+        { "name": "voterRegistry", "isMut": true, "isSigner": false },
+        { "name": "voterTokenAccount", "isMut": true, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "merkleProof", "type": { "vec": { "array": ["u8", 32] } } }]
+    },
+    {
+      "name": "addOutcome",
+      "accounts": [
+        { "name": "authority", "isMut": true, "isSigner": true },
+        { "name": "election", "isMut": true, "isSigner": false },
+        { "name": "outcome", "isMut": true, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "label", "type": "string" },
+        { "name": "outcomeIndex", "type": "u8" }
+      ]
+    },
+    {
+      "name": "delegateVote",
+      "accounts": [
+        { "name": "voter", "isMut": true, "isSigner": true },
+        { "name": "election", "isMut": false, "isSigner": false },
+        { "name": "electionConfig", "isMut": false, "isSigner": false },
+        { "name": "voterRegistry", "isMut": true, "isSigner": false },
+        { "name": "delegateRegistry", "isMut": false, "isSigner": false }
+      ],
+      "args": []
+    },
+    {
+      "name": "castVote",
+      "accounts": [
+        { "name": "voter", "isMut": true, "isSigner": true },
+        { "name": "feeReceiver", "isMut": true, "isSigner": false },
+        { "name": "election", "isMut": true, "isSigner": false },
+        { "name": "electionConfig", "isMut": false, "isSigner": false },
+        { "name": "sbtMint", "isMut": true, "isSigner": false },
+        { "name": "voterRegistry", "isMut": true, "isSigner": false },
+        { "name": "voterTokenAccount", "isMut": true, "isSigner": false },
+        { "name": "outcome", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "outcomeIndex", "type": "u8" }]
+    },
+    {
+      "name": "castVoteWithToken",
+      "accounts": [
+        { "name": "voter", "isMut": true, "isSigner": true },
+        { "name": "election", "isMut": false, "isSigner": false },
+        { "name": "electionConfig", "isMut": false, "isSigner": false },
+        { "name": "voterTokenAccount", "isMut": false, "isSigner": false },
+        { "name": "tokenMint", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "outcome", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "outcomeIndex", "type": "u8" }]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Election",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "authority", "type": "publicKey" },
+          { "name": "title", "type": "string" },
+          { "name": "startTime", "type": "i64" },
+          { "name": "endTime", "type": "i64" },
+          { "name": "sbtMint", "type": "publicKey" },
+          { "name": "bump", "type": "u8" },
+          { "name": "totalWeight", "type": "u64" },
+          { "name": "denomFactor", "type": "u64" },
+          { "name": "registeredVoterCount", "type": "u32" },
+          { "name": "outcomeCount", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "ElectionConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "election", "type": "publicKey" },
+          { "name": "defaultVoterWeight", "type": "u64" },
+          { "name": "quorumPercentage", "type": "u8" },
+          { "name": "maxFreeVoteChanges", "type": "u8" },
+          { "name": "pricePerVoteChange", "type": "u64" },
+          { "name": "allowDelegation", "type": "bool" },
+          { "name": "allowTokenVoting", "type": "bool" },
+          { "name": "tokenMint", "type": { "option": "publicKey" } },
+          { "name": "minTokenBalance", "type": "u64" },
+          { "name": "registrationMode", "type": "u8" },
+          { "name": "merkleRoot", "type": { "array": ["u8", 32] } },
+          { "name": "registrationEndTs", "type": "i64" },
+          { "name": "maxRegisteredVoters", "type": "u32" },
+          { "name": "registrationFeeLamports", "type": "u64" }
+        ]
+      }
+    },
+    {
+      "name": "ElectionOutcome",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "election", "type": "publicKey" },
+          { "name": "index", "type": "u8" },
+          { "name": "label", "type": "string" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "VoterRegistry",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "election", "type": "publicKey" },
+          { "name": "voter", "type": "publicKey" },
+          { "name": "weight", "type": "u64" },
+          { "name": "isWhitelisted", "type": "bool" },
+          { "name": "hasVoted", "type": "bool" },
+          { "name": "currentVote", "type": { "option": "string" } },
+          { "name": "voteChangesUsed", "type": "u8" },
+          { "name": "delegatedTo", "type": { "option": "publicKey" } },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "VoteCast",
+      "fields": [
+        { "name": "election", "type": "publicKey", "index": false },
+        { "name": "voter", "type": "publicKey", "index": false },
+        { "name": "candidate", "type": "string", "index": false },
+        { "name": "weight", "type": "u64", "index": false },
+        { "name": "timestamp", "type": "i64", "index": false },
+        { "name": "voteChangeNumber", "type": "u8", "index": false }
+      ]
+    },
+    {
+      "name": "OutcomeAdded",
+      "fields": [
+        { "name": "election", "type": "publicKey", "index": false },
+        { "name": "index", "type": "u8", "index": false },
+        { "name": "label", "type": "string", "index": false }
+      ]
+    }
+  ],
+  "errors": [
+    { "code": 6000, "name": "ElectionNotStarted", "msg": "Election has not started yet." },
+    { "code": 6001, "name": "ElectionEnded", "msg": "Election is already over." },
+    { "code": 6002, "name": "NoVotingPower", "msg": "You have no voting tokens remaining." },
+    { "code": 6003, "name": "InvalidQuorumPercentage", "msg": "Invalid quorum percentage (must be 1-100)." },
+    { "code": 6004, "name": "NotWhitelisted", "msg": "Voter is not whitelisted." },
+    { "code": 6005, "name": "AlreadyVoted", "msg": "Voter has already cast a vote." },
+    { "code": 6006, "name": "CannotVoteIfDelegated", "msg": "Voter has delegated their vote and cannot vote directly." },
+    { "code": 6007, "name": "DelegationNotAllowed", "msg": "Delegation is not allowed for this election." },
+    { "code": 6008, "name": "DelegateNotWhitelisted", "msg": "Delegate is not whitelisted." },
+    { "code": 6009, "name": "WeightMismatch", "msg": "Voting weight does not match registry." },
+    { "code": 6010, "name": "TokenVotingNotEnabled", "msg": "Token-based voting is not enabled for this election." },
+    { "code": 6011, "name": "InsufficientTokenBalance", "msg": "Voter does not have sufficient token balance." },
+    { "code": 6012, "name": "SelfRegistrationNotAllowed", "msg": "Self-registration is not enabled for this election." },
+    { "code": 6013, "name": "RegistrationClosed", "msg": "Registration is closed." },
+    { "code": 6014, "name": "MerkleProofInvalid", "msg": "Merkle proof invalid." },
+    { "code": 6015, "name": "MaxVotersReached", "msg": "Max registered voters reached." },
+    { "code": 6016, "name": "InvalidOutcome", "msg": "Invalid outcome." },
+    { "code": 6017, "name": "NoOutcomesDefined", "msg": "No outcomes defined for this election." },
+    { "code": 6018, "name": "ElectionAlreadyStarted", "msg": "Voting has already started." },
+    { "code": 6019, "name": "LabelTooLong", "msg": "Outcome label too long." },
+    { "code": 6020, "name": "InvalidOutcomeIndex", "msg": "Invalid outcome index." },
+    { "code": 6021, "name": "TooManyOutcomes", "msg": "Too many outcomes." },
+    { "code": 6022, "name": "InvalidRegistrationMode", "msg": "Invalid registration mode." },
+    { "code": 6023, "name": "InvalidMerkleRoot", "msg": "Invalid merkle root." }
+  ],
+  "metadata": { "address": "5ZvG5oXKD6YKgWkAKWQMjdAb3vXEWzRNNGk3uRSt63gP" }
+}
