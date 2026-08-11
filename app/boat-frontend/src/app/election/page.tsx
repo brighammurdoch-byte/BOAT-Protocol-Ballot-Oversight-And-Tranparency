@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import BoatWalletButton from "../../components/BoatWalletButton";
 import { PublicKey } from "@solana/web3.js";
 import {
   DEFAULT_BOAT_PROGRAM_ID,
@@ -157,7 +157,7 @@ export default function ElectionTallyPage() {
         <Link href="/" className="text-teal-800 text-sm">
           ← BOAT
         </Link>
-        <WalletMultiButton />
+        <BoatWalletButton />
       </div>
       <h1 className="text-3xl font-semibold">Public tally</h1>
       <p className="text-stone-600 mt-2 mb-8">

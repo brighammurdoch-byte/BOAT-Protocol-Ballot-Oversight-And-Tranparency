@@ -13,11 +13,14 @@ const sans = Source_Sans_3({
   subsets: ["latin"],
 });
 
+const basePath = (process.env.BASE_PATH || "").replace(/\/$/, "");
+
 export const metadata: Metadata = {
   title: "BOAT — Ballot Oversight And Transparency",
   description:
     "Campus elections on Solana: create, vote, and independently verify tallies.",
-  manifest: "/manifest.webmanifest",
+  // Next static export does not always prefix metadata.manifest with basePath.
+  manifest: `${basePath}/manifest.webmanifest`,
 };
 
 export default function RootLayout({

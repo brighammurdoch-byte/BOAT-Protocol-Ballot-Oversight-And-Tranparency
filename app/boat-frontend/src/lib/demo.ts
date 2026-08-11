@@ -5,6 +5,9 @@ export function friendlyError(err: unknown): string {
   if (lower.includes("connect") && lower.includes("wallet")) {
     return "Connect a Solana wallet (Phantom or Solflare) first.";
   }
+  if (lower.includes("trust")) {
+    return "Trust Wallet is not supported on this site. Use Phantom or Solflare.";
+  }
   if (lower.includes("electionnotstarted") || lower.includes("has not started")) {
     return "Voting has not opened yet. Wait until the election start time, then try again.";
   }

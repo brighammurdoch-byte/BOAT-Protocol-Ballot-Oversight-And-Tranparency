@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import BoatWalletButton from "../components/BoatWalletButton";
 
 export default function Home() {
   return (
@@ -17,7 +17,7 @@ export default function Home() {
             voters, cast ballots, and let anyone recompute the tally from chain.
           </p>
         </div>
-        <WalletMultiButton />
+        <BoatWalletButton />
       </header>
 
       <nav className="grid gap-4">
