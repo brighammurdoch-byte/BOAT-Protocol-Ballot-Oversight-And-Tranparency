@@ -1,4 +1,4 @@
-# Deploy static BOAT web to GitHub Pages (no interactive Vercel login required).
+# Deploy static BOAT web to GitHub Pages.
 name: Deploy BOAT web
 
 on:
@@ -34,9 +34,13 @@ jobs:
         working-directory: app/boat-frontend
         env:
           NEXT_PUBLIC_SOLANA_RPC: https://api.devnet.solana.com
-          # Must match the GitHub Pages project path (/<repo>)
-          NEXT_PUBLIC_BASE_PATH: /BOAT-Protocol-Ballot-Oversight-And-Tranparency
-        run: npm ci && npm run build
+          BASE_PATH: /BOAT-Protocol-Ballot-Oversight-And-Tranparency
+        run: npm ci && npx next build --webpack
+      - name: Verify basePath in HTML
+        working-directory: app/boat-frontend
+        run: |
+          grep -q '/BOAT-Protocol-Ballot-Oversight-And-Tranparency/_next/' out/index.html
+          grep -q 'href="/BOAT-Protocol-Ballot-Oversight-And-Tranparency/admin/' out/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: app/boat-frontend/out

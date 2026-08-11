@@ -1,14 +1,21 @@
 import type { NextConfig } from "next";
 
-// Project Pages site lives at /<repo>/ — set in CI. Local/Vercel leave unset.
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+/**
+ * GitHub project Pages serves at /<repo>/. Set BASE_PATH when building for Pages.
+ * Local / Vercel: leave unset.
+ */
+const basePath = (process.env.BASE_PATH || "").replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
   output: "export",
   images: { unoptimized: true },
-  basePath: basePath || undefined,
-  assetPrefix: basePath || undefined,
   trailingSlash: true,
+  ...(basePath
+    ? {
+        basePath,
+        assetPrefix: basePath,
+      }
+    : {}),
 };
 
 export default nextConfig;
