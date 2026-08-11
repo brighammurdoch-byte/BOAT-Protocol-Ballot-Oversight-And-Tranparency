@@ -1,5 +1,5 @@
 {
-  "address": "HFr5VbxjxszddWUUaayzbxQ2onD6EzfNcCG2hTXQ8ga6",
+  "address": "CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ",
   "metadata": {
     "name": "boat_final",
     "version": "0.1.0",
@@ -91,6 +91,33 @@
           "name": "election_config"
         },
         {
+          "name": "private_config",
+          "docs": [
+            "Optional: when present and enabled, transparent cast_vote is rejected."
+          ],
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  118,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              }
+            ]
+          }
+        },
+        {
           "name": "sbt_mint"
         },
         {
@@ -172,6 +199,131 @@
       ]
     },
     {
+      "name": "cast_vote_zk",
+      "docs": [
+        "Cast a private ballot: verify Groth16-shaped proof, store nullifier, bump aggregate tally.",
+        "Does not write `VoterRegistry.current_vote` (no per-wallet choice on-chain)."
+      ],
+      "discriminator": [
+        59,
+        246,
+        59,
+        53,
+        12,
+        138,
+        98,
+        36
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "election",
+          "relations": [
+            "private_config"
+          ]
+        },
+        {
+          "name": "private_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  118,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              }
+            ]
+          }
+        },
+        {
+          "name": "nullifier_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  117,
+                  108,
+                  108,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              },
+              {
+                "kind": "arg",
+                "path": "nullifier"
+              }
+            ]
+          }
+        },
+        {
+          "name": "outcome"
+        },
+        {
+          "name": "private_tally",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "outcome_index",
+          "type": "u8"
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "public_inputs",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "delegate_vote",
       "docs": [
         "Optional: mark that the voter delegated (blocks direct cast). Weight is NOT transferred."
@@ -214,6 +366,80 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "enable_private_ballots",
+      "docs": [
+        "Enable private ballots before voting starts. Commits the eligibility Merkle root.",
+        "`dev_mode=true` accepts the deterministic binder proof from `@boat/zk-circuits`",
+        "(not secure — trials / CI only). Production must set `dev_mode=false` and ship a VK."
+      ],
+      "discriminator": [
+        145,
+        87,
+        63,
+        97,
+        111,
+        94,
+        143,
+        123
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "election"
+          ]
+        },
+        {
+          "name": "election"
+        },
+        {
+          "name": "private_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  118,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "eligibility_merkle_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "dev_mode",
+          "type": "bool"
+        }
+      ]
     },
     {
       "name": "initialize_election",
@@ -544,6 +770,72 @@
           "type": "bool"
         }
       ]
+    },
+    {
+      "name": "set_eligibility_root",
+      "docs": [
+        "Update eligibility Merkle root before voting starts (e.g. after late registration)."
+      ],
+      "discriminator": [
+        19,
+        109,
+        114,
+        36,
+        207,
+        203,
+        137,
+        33
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "election"
+          ]
+        },
+        {
+          "name": "election",
+          "relations": [
+            "private_config"
+          ]
+        },
+        {
+          "name": "private_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  118,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "eligibility_merkle_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
     }
   ],
   "accounts": [
@@ -587,6 +879,45 @@
       ]
     },
     {
+      "name": "NullifierRecord",
+      "discriminator": [
+        56,
+        18,
+        57,
+        175,
+        69,
+        202,
+        189,
+        70
+      ]
+    },
+    {
+      "name": "PrivateBallotConfig",
+      "discriminator": [
+        154,
+        11,
+        86,
+        26,
+        255,
+        5,
+        182,
+        108
+      ]
+    },
+    {
+      "name": "PrivateOutcomeTally",
+      "discriminator": [
+        92,
+        95,
+        173,
+        56,
+        54,
+        215,
+        36,
+        191
+      ]
+    },
+    {
       "name": "VoterRegistry",
       "discriminator": [
         146,
@@ -612,6 +943,19 @@
         43,
         100,
         51
+      ]
+    },
+    {
+      "name": "PrivateVoteCast",
+      "discriminator": [
+        0,
+        54,
+        255,
+        206,
+        96,
+        179,
+        161,
+        229
       ]
     },
     {
@@ -728,6 +1072,46 @@
       "code": 6019,
       "name": "InvalidMint",
       "msg": "Invalid SBT mint for this election."
+    },
+    {
+      "code": 6020,
+      "name": "UsePrivateBallot",
+      "msg": "This election requires cast_vote_zk (private ballots)."
+    },
+    {
+      "code": 6021,
+      "name": "PrivateBallotsNotEnabled",
+      "msg": "Private ballots are not enabled for this election."
+    },
+    {
+      "code": 6022,
+      "name": "InvalidZkProof",
+      "msg": "Invalid ZK proof bytes."
+    },
+    {
+      "code": 6023,
+      "name": "InvalidZkPublicInputs",
+      "msg": "Invalid ZK public inputs."
+    },
+    {
+      "code": 6024,
+      "name": "MerkleRootMismatch",
+      "msg": "Merkle root does not match election commitment."
+    },
+    {
+      "code": 6025,
+      "name": "NullifierMismatch",
+      "msg": "Nullifier does not match public inputs."
+    },
+    {
+      "code": 6026,
+      "name": "ElectionIdMismatch",
+      "msg": "Election id in public inputs does not match."
+    },
+    {
+      "code": 6027,
+      "name": "ZkVerifierNotConfigured",
+      "msg": "Production Groth16 verifier is not configured (ceremony VK missing)."
     }
   ],
   "types": [
@@ -844,6 +1228,31 @@
       }
     },
     {
+      "name": "NullifierRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "nullifier",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "OutcomeAdded",
       "type": {
         "kind": "struct",
@@ -859,6 +1268,105 @@
           {
             "name": "label",
             "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PrivateBallotConfig",
+      "docs": [
+        "Optional private-ballot config (separate PDA so transparent elections stay unchanged)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "enabled",
+            "type": "bool"
+          },
+          {
+            "name": "dev_mode",
+            "docs": [
+              "Accepts `@boat/zk-circuits` binder proofs — NOT for campus production."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "eligibility_merkle_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "private_vote_count",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PrivateOutcomeTally",
+      "docs": [
+        "Aggregate counter per outcome in private mode (no per-wallet choice)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "outcome_index",
+            "type": "u8"
+          },
+          {
+            "name": "weight",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PrivateVoteCast",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "nullifier",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "outcome_index",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
           }
         ]
       }

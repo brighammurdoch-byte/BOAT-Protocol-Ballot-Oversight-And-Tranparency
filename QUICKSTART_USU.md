@@ -2,7 +2,9 @@
 
 BOAT is a **side project** for transparent student officer elections on Solana (devnet first). DAO token voting is out of scope. ZK privacy is in progress (`docs/ZK_STATUS.md`).
 
-Program id (rebuild): `HFr5VbxjxszddWUUaayzbxQ2onD6EzfNcCG2hTXQ8ga6`
+Program id (rebuild): `CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ`
+
+(Prior transparent-onlydevnet binary: `HFr5VbxjxszddWUUaayzbxQ2onD6EzfNcCG2hTXQ8ga6`.)
 
 ## Toolchain (WSL recommended on Windows)
 
@@ -63,6 +65,14 @@ Automated smoke (no Phantom):
 ```bash
 SOLANA_RPC=https://api.devnet.solana.com yarn demo:usu
 ```
+
+Private ballot trial (localnet / deployed ZK program):
+
+```bash
+yarn demo:zk
+```
+
+See [`docs/ZK_STATUS.md`](docs/ZK_STATUS.md) for Merkle + nullifier limits.
 
 ## Thin API
 

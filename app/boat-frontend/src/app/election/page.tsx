@@ -8,6 +8,9 @@ import { PublicKey } from "@solana/web3.js";
 import {
   DEFAULT_BOAT_PROGRAM_ID,
   fetchElection,
+  fetchOutcomes,
+  fetchPrivateConfig,
+  fetchPrivateTallies,
   fetchVoterRegistriesForElection,
   tallyFromRegistries,
 } from "@boat/sdk";
@@ -23,6 +26,7 @@ type TallyView = {
   participationPct: number;
   registeredVoters: number;
   yourVote: string | null;
+  privateMode: boolean;
 };
 
 export default function ElectionTallyPage() {
@@ -59,12 +63,55 @@ export default function ElectionTallyPage() {
             signAllTransactions: async (txs: any) => txs,
           };
       let quorumPct = 33;
+      let outcomeCount = 0;
       try {
-        const { config } = await fetchElection(connection, election, dummy);
+        const { election: e, config } = await fetchElection(
+          connection,
+          election,
+          dummy
+        );
         quorumPct = Number(config.quorumPercentage ?? config.quorum_percentage ?? 33);
+        outcomeCount = Number(e.outcomeCount ?? e.outcome_count ?? 0);
       } catch {
         // keep default
       }
+
+      const { data: priv } = await fetchPrivateConfig(connection, election, dummy);
+      if (priv?.enabled) {
+        const outcomes = await fetchOutcomes(
+          connection,
+          election,
+          outcomeCount,
+          dummy
+        );
+        const tallies = await fetchPrivateTallies(
+          connection,
+          election,
+          outcomeCount,
+          dummy
+        );
+        const totals = outcomes
+          .map((o) => {
+            const t = tallies.find((x) => x.index === o.index);
+            return { label: o.label, weight: t?.weight ?? 0n };
+          })
+          .sort((a, b) => (a.weight === b.weight ? 0 : a.weight > b.weight ? -1 : 1));
+        const votedWeight = totals.reduce((s, t) => s + t.weight, 0n);
+        setView({
+          election: election.toBase58(),
+          totals,
+          votedWeight,
+          registeredWeight: votedWeight,
+          quorumPct,
+          quorumMet: true,
+          participationPct: 100,
+          registeredVoters: Number(priv.privateVoteCount ?? priv.private_vote_count ?? 0),
+          yourVote: null,
+          privateMode: true,
+        });
+        return;
+      }
+
       const rows = await fetchVoterRegistriesForElection(
         connection,
         DEFAULT_BOAT_PROGRAM_ID,
@@ -88,6 +135,7 @@ export default function ElectionTallyPage() {
         participationPct: tally.participationPct,
         registeredVoters: rows.length,
         yourVote: mine?.hasVoted ? mine.currentVote : null,
+        privateMode: false,
       });
     } catch (e: unknown) {
       setErr(friendlyError(e));
@@ -113,8 +161,9 @@ export default function ElectionTallyPage() {
       </div>
       <h1 className="text-3xl font-semibold">Public tally</h1>
       <p className="text-stone-600 mt-2 mb-8">
-        Anyone can recompute results from on-chain voter registries — the
-        answer to “was the count fair?”
+        {view?.privateMode
+          ? "Private elections expose aggregate outcome counters only — no per-wallet choice."
+          : "Anyone can recompute results from on-chain voter registries — the answer to “was the count fair?”"}
       </p>
       <label className="block mb-4">
         <span className="text-sm text-stone-600">Election PDA</span>

@@ -4,7 +4,9 @@ use anchor_spl::{
     token_interface::{self, Mint, MintTo, TokenAccount, TokenInterface},
 };
 
-declare_id!("HFr5VbxjxszddWUUaayzbxQ2onD6EzfNcCG2hTXQ8ga6");
+pub mod zk_verify;
+
+declare_id!("CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ");
 
 /// Authority-only registration (USU MVP default).
 pub const REGISTRATION_AUTHORITY_ONLY: u8 = 0;
@@ -12,6 +14,10 @@ pub const REGISTRATION_AUTHORITY_ONLY: u8 = 0;
 #[program]
 pub mod boat_final {
     use super::*;
+    use crate::zk_verify::{
+        election_id_from_pubkey, verify_proof, ZkPublicInputs, GROTH16_PROOF_LEN,
+        PUBLIC_INPUT_COUNT,
+    };
 
     pub fn initialize_election(
         ctx: Context<InitializeElection>,
@@ -199,6 +205,11 @@ pub mod boat_final {
         let election = &ctx.accounts.election;
         let clock = Clock::get()?;
 
+        // Transparent path only — private elections must use cast_vote_zk.
+        if let Some(ref private_cfg) = ctx.accounts.private_config {
+            require!(!private_cfg.enabled, ErrorCode::UsePrivateBallot);
+        }
+
         require!(election.outcome_count > 0, ErrorCode::NoOutcomesDefined);
         require!(
             clock.unix_timestamp >= election.start_time,
@@ -255,6 +266,129 @@ pub mod boat_final {
 
         Ok(())
     }
+
+    /// Enable private ballots before voting starts. Commits the eligibility Merkle root.
+    /// `dev_mode=true` accepts the deterministic binder proof from `@boat/zk-circuits`
+    /// (not secure — trials / CI only). Production must set `dev_mode=false` and ship a VK.
+    pub fn enable_private_ballots(
+        ctx: Context<EnablePrivateBallots>,
+        eligibility_merkle_root: [u8; 32],
+        dev_mode: bool,
+    ) -> Result<()> {
+        let clock = Clock::get()?;
+        require!(
+            clock.unix_timestamp < ctx.accounts.election.start_time,
+            ErrorCode::ElectionAlreadyStarted
+        );
+
+        let cfg = &mut ctx.accounts.private_config;
+        cfg.election = ctx.accounts.election.key();
+        cfg.enabled = true;
+        cfg.dev_mode = dev_mode;
+        cfg.eligibility_merkle_root = eligibility_merkle_root;
+        cfg.private_vote_count = 0;
+        cfg.bump = ctx.bumps.private_config;
+
+        msg!(
+            "Private ballots enabled (dev_mode={}) root={:?}",
+            dev_mode,
+            eligibility_merkle_root
+        );
+        Ok(())
+    }
+
+    /// Update eligibility Merkle root before voting starts (e.g. after late registration).
+    pub fn set_eligibility_root(
+        ctx: Context<SetEligibilityRoot>,
+        eligibility_merkle_root: [u8; 32],
+    ) -> Result<()> {
+        let clock = Clock::get()?;
+        require!(
+            clock.unix_timestamp < ctx.accounts.election.start_time,
+            ErrorCode::ElectionAlreadyStarted
+        );
+        require!(
+            ctx.accounts.private_config.enabled,
+            ErrorCode::PrivateBallotsNotEnabled
+        );
+        ctx.accounts.private_config.eligibility_merkle_root = eligibility_merkle_root;
+        msg!("Eligibility Merkle root updated");
+        Ok(())
+    }
+
+    /// Cast a private ballot: verify Groth16-shaped proof, store nullifier, bump aggregate tally.
+    /// Does not write `VoterRegistry.current_vote` (no per-wallet choice on-chain).
+    pub fn cast_vote_zk(
+        ctx: Context<CastVoteZk>,
+        outcome_index: u8,
+        nullifier: [u8; 32],
+        proof: Vec<u8>,
+        public_inputs: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        let election = &ctx.accounts.election;
+        let private_cfg = &mut ctx.accounts.private_config;
+        require!(private_cfg.enabled, ErrorCode::PrivateBallotsNotEnabled);
+
+        let clock = Clock::get()?;
+        require!(election.outcome_count > 0, ErrorCode::NoOutcomesDefined);
+        require!(
+            clock.unix_timestamp >= election.start_time,
+            ErrorCode::ElectionNotStarted
+        );
+        require!(
+            clock.unix_timestamp <= election.end_time,
+            ErrorCode::ElectionEnded
+        );
+
+        require!(proof.len() == GROTH16_PROOF_LEN, ErrorCode::InvalidZkProof);
+        require!(
+            public_inputs.len() == PUBLIC_INPUT_COUNT,
+            ErrorCode::InvalidZkPublicInputs
+        );
+
+        let inputs = ZkPublicInputs::from_slices(&public_inputs)?;
+        require!(
+            inputs.merkle_root == private_cfg.eligibility_merkle_root,
+            ErrorCode::MerkleRootMismatch
+        );
+        require!(inputs.nullifier == nullifier, ErrorCode::NullifierMismatch);
+        let pi_outcome = inputs.outcome_index_u8()?;
+        require!(pi_outcome == outcome_index, ErrorCode::InvalidOutcome);
+        require!(
+            inputs.election_id == election_id_from_pubkey(&election.key()),
+            ErrorCode::ElectionIdMismatch
+        );
+
+        verify_proof(&proof, &inputs, private_cfg.dev_mode)?;
+
+        let outcome = &ctx.accounts.outcome;
+        require!(outcome.index == outcome_index, ErrorCode::InvalidOutcome);
+
+        let nullifier_acc = &mut ctx.accounts.nullifier_record;
+        nullifier_acc.election = election.key();
+        nullifier_acc.nullifier = nullifier;
+        nullifier_acc.bump = ctx.bumps.nullifier_record;
+
+        let tally = &mut ctx.accounts.private_tally;
+        if tally.election == Pubkey::default() {
+            tally.election = election.key();
+            tally.outcome_index = outcome_index;
+            tally.weight = 0;
+            tally.bump = ctx.bumps.private_tally;
+        }
+        require!(tally.outcome_index == outcome_index, ErrorCode::InvalidOutcome);
+        tally.weight = tally.weight.saturating_add(1);
+        private_cfg.private_vote_count = private_cfg.private_vote_count.saturating_add(1);
+
+        emit!(PrivateVoteCast {
+            election: election.key(),
+            nullifier,
+            outcome_index,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
 }
 
 #[account]
@@ -306,6 +440,35 @@ pub struct VoterRegistry {
     pub bump: u8,
 }
 
+/// Optional private-ballot config (separate PDA so transparent elections stay unchanged).
+#[account]
+pub struct PrivateBallotConfig {
+    pub election: Pubkey,
+    pub enabled: bool,
+    /// Accepts `@boat/zk-circuits` binder proofs — NOT for campus production.
+    pub dev_mode: bool,
+    pub eligibility_merkle_root: [u8; 32],
+    pub private_vote_count: u64,
+    pub bump: u8,
+}
+
+#[account]
+pub struct NullifierRecord {
+    pub election: Pubkey,
+    pub nullifier: [u8; 32],
+    pub bump: u8,
+}
+
+/// Aggregate counter per outcome in private mode (no per-wallet choice).
+#[account]
+#[derive(Default)]
+pub struct PrivateOutcomeTally {
+    pub election: Pubkey,
+    pub outcome_index: u8,
+    pub weight: u64,
+    pub bump: u8,
+}
+
 #[event]
 pub struct VoteCast {
     pub election: Pubkey,
@@ -314,6 +477,14 @@ pub struct VoteCast {
     pub weight: u64,
     pub timestamp: i64,
     pub vote_change_number: u8,
+}
+
+#[event]
+pub struct PrivateVoteCast {
+    pub election: Pubkey,
+    pub nullifier: [u8; 32],
+    pub outcome_index: u8,
+    pub timestamp: i64,
 }
 
 #[event]
@@ -470,6 +641,13 @@ pub struct CastVote<'info> {
     #[account(has_one = election)]
     pub election_config: Account<'info, ElectionConfig>,
 
+    /// Optional: when present and enabled, transparent cast_vote is rejected.
+    #[account(
+        seeds = [b"private", election.key().as_ref()],
+        bump,
+    )]
+    pub private_config: Option<Account<'info, PrivateBallotConfig>>,
+
     #[account(constraint = sbt_mint.key() == election.sbt_mint @ ErrorCode::InvalidMint)]
     pub sbt_mint: InterfaceAccount<'info, Mint>,
 
@@ -492,6 +670,87 @@ pub struct CastVote<'info> {
     pub outcome: Account<'info, ElectionOutcome>,
 
     pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct EnablePrivateBallots<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(has_one = authority)]
+    pub election: Account<'info, Election>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + 32 + 1 + 1 + 32 + 8 + 1,
+        seeds = [b"private", election.key().as_ref()],
+        bump
+    )]
+    pub private_config: Account<'info, PrivateBallotConfig>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SetEligibilityRoot<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(has_one = authority)]
+    pub election: Account<'info, Election>,
+
+    #[account(
+        mut,
+        seeds = [b"private", election.key().as_ref()],
+        bump = private_config.bump,
+        has_one = election
+    )]
+    pub private_config: Account<'info, PrivateBallotConfig>,
+}
+
+#[derive(Accounts)]
+#[instruction(outcome_index: u8, nullifier: [u8; 32])]
+pub struct CastVoteZk<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    pub election: Account<'info, Election>,
+
+    #[account(
+        mut,
+        seeds = [b"private", election.key().as_ref()],
+        bump = private_config.bump,
+        has_one = election
+    )]
+    pub private_config: Account<'info, PrivateBallotConfig>,
+
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + 32 + 32 + 1,
+        seeds = [b"nullifier", election.key().as_ref(), nullifier.as_ref()],
+        bump
+    )]
+    pub nullifier_record: Account<'info, NullifierRecord>,
+
+    #[account(
+        seeds = [b"outcome", election.key().as_ref(), &[outcome_index]],
+        bump = outcome.bump,
+        constraint = outcome.election == election.key() @ ErrorCode::InvalidOutcome,
+        constraint = outcome.index == outcome_index @ ErrorCode::InvalidOutcome
+    )]
+    pub outcome: Account<'info, ElectionOutcome>,
+
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = 8 + 32 + 1 + 8 + 1,
+        seeds = [b"private_tally", election.key().as_ref(), &[outcome_index]],
+        bump
+    )]
+    pub private_tally: Account<'info, PrivateOutcomeTally>,
+
     pub system_program: Program<'info, System>,
 }
 
@@ -537,4 +796,20 @@ pub enum ErrorCode {
     InvalidElectionWindow,
     #[msg("Invalid SBT mint for this election.")]
     InvalidMint,
+    #[msg("This election requires cast_vote_zk (private ballots).")]
+    UsePrivateBallot,
+    #[msg("Private ballots are not enabled for this election.")]
+    PrivateBallotsNotEnabled,
+    #[msg("Invalid ZK proof bytes.")]
+    InvalidZkProof,
+    #[msg("Invalid ZK public inputs.")]
+    InvalidZkPublicInputs,
+    #[msg("Merkle root does not match election commitment.")]
+    MerkleRootMismatch,
+    #[msg("Nullifier does not match public inputs.")]
+    NullifierMismatch,
+    #[msg("Election id in public inputs does not match.")]
+    ElectionIdMismatch,
+    #[msg("Production Groth16 verifier is not configured (ceremony VK missing).")]
+    ZkVerifierNotConfigured,
 }

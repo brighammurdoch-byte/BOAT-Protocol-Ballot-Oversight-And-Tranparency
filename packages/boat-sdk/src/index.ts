@@ -35,6 +35,9 @@ export const PDA_SEEDS = {
   mint: "mint",
   voterRegistry: "voter_registry",
   outcome: "outcome",
+  private: "private",
+  nullifier: "nullifier",
+  privateTally: "private_tally",
 } as const;
 
 export type AnchorWalletLike = {
@@ -109,6 +112,46 @@ export function pdaOutcome(
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from(PDA_SEEDS.outcome),
+      election.toBuffer(),
+      Buffer.from([outcomeIndex & 0xff]),
+    ],
+    programId
+  );
+}
+
+export function pdaPrivateConfig(
+  election: PublicKey,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from(PDA_SEEDS.private), election.toBuffer()],
+    programId
+  );
+}
+
+export function pdaNullifier(
+  election: PublicKey,
+  nullifier: Uint8Array,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from(PDA_SEEDS.nullifier),
+      election.toBuffer(),
+      Buffer.from(nullifier),
+    ],
+    programId
+  );
+}
+
+export function pdaPrivateTally(
+  election: PublicKey,
+  outcomeIndex: number,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from(PDA_SEEDS.privateTally),
       election.toBuffer(),
       Buffer.from([outcomeIndex & 0xff]),
     ],
@@ -232,6 +275,7 @@ export async function castVote(
       feeReceiver,
       election,
       electionConfig,
+      privateConfig: null,
       sbtMint,
       voterRegistry,
       voterTokenAccount,
@@ -242,6 +286,132 @@ export async function castVote(
     .rpc();
 
   return { signature: sig };
+}
+
+export async function enablePrivateBallots(
+  connection: Connection,
+  wallet: AnchorWalletLike,
+  election: PublicKey,
+  eligibilityMerkleRoot: Uint8Array,
+  devMode: boolean = true,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const [privateConfig] = pdaPrivateConfig(election, programId);
+  const root = Array.from(eligibilityMerkleRoot);
+  const sig = await program.methods
+    .enablePrivateBallots(root, devMode)
+    .accounts({
+      authority: wallet.publicKey,
+      election,
+      privateConfig,
+      systemProgram: SystemProgram.programId,
+    } as any)
+    .rpc();
+  return { signature: sig, privateConfig };
+}
+
+export async function setEligibilityRoot(
+  connection: Connection,
+  wallet: AnchorWalletLike,
+  election: PublicKey,
+  eligibilityMerkleRoot: Uint8Array,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const [privateConfig] = pdaPrivateConfig(election, programId);
+  const root = Array.from(eligibilityMerkleRoot);
+  const sig = await program.methods
+    .setEligibilityRoot(root)
+    .accounts({
+      authority: wallet.publicKey,
+      election,
+      privateConfig,
+    } as any)
+    .rpc();
+  return { signature: sig };
+}
+
+export async function castVoteZk(
+  connection: Connection,
+  wallet: AnchorWalletLike,
+  election: PublicKey,
+  args: {
+    outcomeIndex: number;
+    nullifier: Uint8Array;
+    proof: Uint8Array;
+    publicInputs: Uint8Array[];
+  },
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const [privateConfig] = pdaPrivateConfig(election, programId);
+  const [nullifierRecord] = pdaNullifier(election, args.nullifier, programId);
+  const [outcome] = pdaOutcome(election, args.outcomeIndex, programId);
+  const [privateTally] = pdaPrivateTally(election, args.outcomeIndex, programId);
+
+  const sig = await program.methods
+    .castVoteZk(
+      args.outcomeIndex,
+      Array.from(args.nullifier),
+      Buffer.from(args.proof),
+      args.publicInputs.map((pi) => Array.from(pi))
+    )
+    .accounts({
+      payer: wallet.publicKey,
+      election,
+      privateConfig,
+      nullifierRecord,
+      outcome,
+      privateTally,
+      systemProgram: SystemProgram.programId,
+    } as any)
+    .rpc();
+
+  return { signature: sig, nullifierRecord, privateTally };
+}
+
+export async function fetchPrivateConfig(
+  connection: Connection,
+  election: PublicKey,
+  wallet: AnchorWalletLike,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const [privateConfig] = pdaPrivateConfig(election, programId);
+  try {
+    const data = await (program.account as any).privateBallotConfig.fetch(
+      privateConfig
+    );
+    return { privateConfig, data };
+  } catch {
+    return { privateConfig, data: null };
+  }
+}
+
+export async function fetchPrivateTallies(
+  connection: Connection,
+  election: PublicKey,
+  outcomeCount: number,
+  wallet: AnchorWalletLike,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const out: { index: number; weight: bigint; pubkey: PublicKey }[] = [];
+  for (let i = 0; i < outcomeCount; i++) {
+    const [pubkey] = pdaPrivateTally(election, i, programId);
+    try {
+      const data = await (program.account as any).privateOutcomeTally.fetch(pubkey);
+      out.push({
+        index: Number(data.outcomeIndex ?? data.outcome_index ?? i),
+        weight: bnToBigInt(data.weight),
+        pubkey,
+      });
+    } catch {
+      out.push({ index: i, weight: 0n, pubkey });
+    }
+  }
+  return out;
 }
 
 export async function registerVoter(

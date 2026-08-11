@@ -4,6 +4,7 @@
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
     "demo:usu": "tsx scripts/usu_demo.ts",
+    "demo:zk": "tsx scripts/zk_demo.ts",
     "test": "anchor test --skip-build --validator legacy"
   },
   "dependencies": {

@@ -1,6 +1,6 @@
-# ZK voting — status after USU transparent MVP
+# ZK voting — status after private-ballot v0
 
-## Frozen transparent layout (do not break without migration)
+## Transparent layout (unchanged default)
 
 From `programs/boat_final`:
 
@@ -8,28 +8,60 @@ From `programs/boat_final`:
 - `ElectionConfig` PDA: `["config", election]`
 - `ElectionOutcome` PDA: `["outcome", election, index]`
 - `VoterRegistry` PDA: `["voter_registry", election, voter]`
-- Vote state today: `VoterRegistry.current_vote: Option<String>` + `VoteCast` event (wallet-linkable)
+- Transparent vote state: `VoterRegistry.current_vote` + `VoteCast` (wallet-linkable)
+- Instruction: `cast_vote` — **rejected** when private mode is enabled
 
-## Target private model
+## Private ballot v0 (this branch)
 
-1. Eligibility Merkle root (or SBT nullifier set) committed at registration close.
-2. Ballot = commitment to outcome index + nullifier; ZK proof of:
-   - membership in eligibility set,
-   - nullifier uniqueness,
-   - vote encrypts/commits to a valid outcome in `0..outcome_count`.
-3. On-chain: verify proof, store nullifier, update aggregate counters (not per-wallet choice).
+Stack: **Groth16 / BN254** circuit sketch + offline prove helpers; on-chain nullifier + aggregate tallies.
 
-## Scaffold in this repo
+### Extra PDAs (do not alter transparent account layouts)
 
-- Circuit sketch: [`packages/zk-circuits/README.md`](../packages/zk-circuits/README.md)
-- Program hook (feature-gated stub): `programs/boat_final` remains transparent-only until the verifier is ready; do not ship a half-broken instruction on campus elections.
+| Account | Seeds | Role |
+|---------|-------|------|
+| `PrivateBallotConfig` | `["private", election]` | `enabled`, `dev_mode`, Merkle root, vote count |
+| `NullifierRecord` | `["nullifier", election, nullifier]` | Double-vote prevention |
+| `PrivateOutcomeTally` | `["private_tally", election, index]` | Aggregate weight per outcome |
 
-## Next engineering steps
+### Instructions
 
-1. Pick proving system (Groth16 on BN254 vs others) compatible with Solana compute budget.
-2. Prototype tiny-electorate circuit offline; generate verifying key.
-3. Add `cast_vote_zk` instruction + nullifier PDA with verifier CPI/account.
-4. Web “Private ballot” mode beside transparent `cast_vote`.
-5. Devnet trial with ~10 voters before any campus claim of anonymity.
+1. `enable_private_ballots(root, dev_mode)` — before `start_time`
+2. `set_eligibility_root(root)` — before `start_time`
+3. `cast_vote_zk(outcome, nullifier, proof[256], public_inputs[4])` — verifies proof, stores nullifier, increments tally
+
+Public inputs: `[merkleRoot, nullifier, outcomeIndex, electionId]`.
+
+### Dev vs production verify
+
+- `dev_mode=true`: accepts deterministic binder proofs from `@boat/zk-circuits` / web helpers (`BOAT_GROTH16_DEV_V0`). **Not secure** — for localnet / tiny trials only.
+- `dev_mode=false`: requires production Groth16 verify (`groth16-solana` hook in `zk_verify.rs`) once a ceremony verifying key is embedded. Currently returns `ZkVerifierNotConfigured`.
+
+### Circuit package
+
+[`packages/zk-circuits`](../packages/zk-circuits): Circom `vote.circom` (Poseidon Merkle depth 8 + nullifier + outcome bound), TS Merkle/proof helpers, compile/setup scripts.
+
+```bash
+cd packages/zk-circuits && npm install && npm test && npm run demo:prove
+# With circom + snarkjs installed:
+./scripts/compile_circuit.sh && ./scripts/setup_groth16.sh
+```
+
+### Client paths
+
+- SDK: `enablePrivateBallots`, `castVoteZk`, `fetchPrivateConfig`, `fetchPrivateTallies`
+- Web: Admin → “Enable private ballots”; Vote page switches to private UI; tally shows aggregate counters
+- Script: `yarn demo:zk` (~8 private votes)
+
+### Limits (honest)
+
+- Not coercion-resistant
+- Not campus-production until audited + real VK
+- Tiny electorate (depth 8 ⇒ ≤ 256 leaves)
+- Single proof per transaction
+
+### Program id note
+
+Transparent MVP was previously deployed at `HFr5VbxjxszddWUUaayzbxQ2onD6EzfNcCG2hTXQ8ga6`.
+This ZK-enabled binary uses `CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ` (keypair under `keys/`) because the prior upgrade authority was not available in CI. Point clients at the IDL address after deploy.
 
 See also [`ZK_ROADMAP.md`](ZK_ROADMAP.md).

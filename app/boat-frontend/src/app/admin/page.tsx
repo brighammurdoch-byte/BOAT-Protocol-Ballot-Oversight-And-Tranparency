@@ -9,6 +9,7 @@ import {
   initializeElection,
   addOutcome,
   registerVoter,
+  enablePrivateBallots,
   explorerTxUrl,
 } from "@boat/sdk";
 import {
@@ -18,6 +19,7 @@ import {
   friendlyError,
   readPdaQuery,
 } from "../../lib/demo";
+import { merkleRootFromSecrets } from "../../lib/zkBallot";
 
 type Checklist = {
   created: boolean;
@@ -36,6 +38,9 @@ export default function AdminPage() {
   const [candidates, setCandidates] = useState("Alice\nBob\nCarol");
   const [voters, setVoters] = useState("");
   const [electionPda, setElectionPda] = useState("");
+  const [privateSecrets, setPrivateSecrets] = useState(
+    "usu-zk-voter-0\nusu-zk-voter-1\nusu-zk-voter-2\nusu-zk-voter-3\nusu-zk-voter-4"
+  );
   const [log, setLog] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -143,6 +148,40 @@ export default function AdminPage() {
         n += 1;
       }
       setChecklist((c) => ({ ...c, registered: c.registered + n }));
+    } catch (e: unknown) {
+      setErr(friendlyError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onEnablePrivate = async () => {
+    setErr(null);
+    setBusy(true);
+    try {
+      if (!wallet.publicKey || !wallet.signTransaction) {
+        throw new Error("Connect a wallet first.");
+      }
+      if (!electionPda.trim()) throw new Error("Election PDA required.");
+      const secrets = privateSecrets
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (secrets.length === 0) {
+        throw new Error("Paste electorate secrets (one per line).");
+      }
+      const root = merkleRootFromSecrets(secrets);
+      const election = new PublicKey(electionPda.trim());
+      const r = await enablePrivateBallots(
+        connection,
+        wallet as any,
+        election,
+        root,
+        true
+      );
+      append(`Private ballots enabled (dev_mode)`);
+      append(`Merkle root committed; share the secret list with eligible voters.`);
+      append(`  ${explorerTxUrl(r.signature, "devnet")}`);
     } catch (e: unknown) {
       setErr(friendlyError(e));
     } finally {
@@ -301,6 +340,32 @@ export default function AdminPage() {
           className="bg-stone-800 text-white px-4 py-2 disabled:opacity-40"
         >
           Register voters
+        </button>
+      </section>
+
+      <section className="space-y-4 mb-10">
+        <h2 className="font-medium text-lg">Optional: private ballots</h2>
+        <p className="text-sm text-stone-600">
+          Before voting starts, commit an eligibility Merkle root. Voters then
+          use secrets (not wallet linkage) on the vote page. Dev proofs only —
+          see docs/ZK_STATUS.md.
+        </p>
+        <label className="block">
+          <span className="text-sm text-stone-600">
+            Electorate secrets (one per line)
+          </span>
+          <textarea
+            className="mt-1 w-full border border-stone-300 bg-white/70 px-3 py-2 min-h-28 font-mono text-sm"
+            value={privateSecrets}
+            onChange={(e) => setPrivateSecrets(e.target.value)}
+          />
+        </label>
+        <button
+          disabled={!canWrite || busy || !electionPda}
+          onClick={onEnablePrivate}
+          className="bg-teal-900 text-white px-4 py-2 disabled:opacity-40"
+        >
+          Enable private ballots (dev)
         </button>
       </section>
 

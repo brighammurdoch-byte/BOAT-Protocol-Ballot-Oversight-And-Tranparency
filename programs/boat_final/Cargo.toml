@@ -19,3 +19,6 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dependencies]
 anchor-lang = { version = "1.1.2", features = ["init-if-needed"] }
 anchor-spl = { version = "1.1.2", features = ["associated_token", "token_2022"] }
+solana-sha256-hasher = "2.2.1"
+# Production Groth16 verify (wire in zk_verify::verify_groth16_production when VK ships):
+# groth16-solana = "0.2.0"

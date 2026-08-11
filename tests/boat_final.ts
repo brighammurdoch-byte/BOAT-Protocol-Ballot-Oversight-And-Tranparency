@@ -1,4 +1,4 @@
-import anchor from "@anchor-lang/core";
+const anchor = require("@anchor-lang/core");
 import BN from "bn.js";
 import {
   TOKEN_2022_PROGRAM_ID,
@@ -8,7 +8,7 @@ import {
 import { Keypair, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
 import { assert } from "chai";
 
-const { AnchorProvider, Program, setProvider, workspace } = anchor as any;
+const { AnchorProvider, Program, setProvider, workspace } = anchor;
 
 describe("boat_final USU MVP", () => {
   const provider = AnchorProvider.env();
@@ -24,7 +24,7 @@ describe("boat_final USU MVP", () => {
   const voter = Keypair.generate();
 
   const now = Math.floor(Date.now() / 1000);
-  const startTime = now + 4;
+  const startTime = now + 45;
   const endTime = now + 3600;
 
   it("initializes election", async () => {
@@ -142,6 +142,7 @@ describe("boat_final USU MVP", () => {
         feeReceiver: voter.publicKey,
         election,
         electionConfig,
+        privateConfig: null,
         sbtMint,
         voterRegistry,
         voterTokenAccount: voterAta,
@@ -167,6 +168,7 @@ describe("boat_final USU MVP", () => {
         feeReceiver: voter.publicKey,
         election,
         electionConfig,
+        privateConfig: null,
         sbtMint,
         voterRegistry,
         voterTokenAccount: voterAta,
