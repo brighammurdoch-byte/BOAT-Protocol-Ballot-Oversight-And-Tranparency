@@ -10,6 +10,8 @@ npm-debug.log
 yarn-error.log
 dist/
 build/
+!packages/zk-circuits/build/
+!packages/zk-circuits/build/verification_key.json
 .next/
 coverage/
 .expo/
