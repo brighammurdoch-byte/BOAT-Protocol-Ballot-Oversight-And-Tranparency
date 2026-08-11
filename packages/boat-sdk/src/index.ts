@@ -6,12 +6,13 @@ import {
   Transaction,
   TransactionInstruction,
 } from "@solana/web3.js";
-import anchor, {
+import {
+  AnchorProvider,
+  BorshAccountsCoder,
+  Program,
   type Idl,
 } from "@anchor-lang/core";
 import BN from "bn.js";
-
-const { AnchorProvider, BorshAccountsCoder, Program } = anchor as any;
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,

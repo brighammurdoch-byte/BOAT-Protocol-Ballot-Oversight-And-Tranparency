@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
@@ -11,6 +11,21 @@ import {
   registerVoter,
   explorerTxUrl,
 } from "@boat/sdk";
+import {
+  copyText,
+  countdownLabel,
+  formatLocal,
+  friendlyError,
+  readPdaQuery,
+} from "../../lib/demo";
+
+type Checklist = {
+  created: boolean;
+  candidates: number;
+  registered: number;
+  startTime?: number;
+  endTime?: number;
+};
 
 export default function AdminPage() {
   const { connection } = useConnection();
@@ -24,6 +39,29 @@ export default function AdminPage() {
   const [log, setLog] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [checklist, setChecklist] = useState<Checklist>({
+    created: false,
+    candidates: 0,
+    registered: 0,
+  });
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const fromQuery = readPdaQuery();
+    if (fromQuery) setElectionPda(fromQuery);
+  }, []);
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(t);
+  }, []);
+
+  const preview = useMemo(() => {
+    const start = Math.floor(Date.now() / 1000) + Math.max(1, startInMin) * 60;
+    const end = start + Math.max(1, durationHours) * 3600;
+    return { start, end };
+  }, [startInMin, durationHours, now]);
 
   const canWrite = useMemo(
     () => Boolean(wallet.publicKey && wallet.signTransaction),
@@ -39,16 +77,18 @@ export default function AdminPage() {
       if (!wallet.publicKey || !wallet.signTransaction) {
         throw new Error("Connect a wallet first.");
       }
-      const now = Math.floor(Date.now() / 1000);
-      const startTime = now + Math.max(1, startInMin) * 60;
-      const endTime = startTime + Math.max(1, durationHours) * 3600;
+      const startTime = preview.start;
+      const endTime = preview.end;
       const res = await initializeElection(connection, wallet as any, {
         title: title.trim(),
         startTime,
         endTime,
       });
-      setElectionPda(res.election.toBase58());
-      append(`Created election ${res.election.toBase58()}`);
+      const pda = res.election.toBase58();
+      setElectionPda(pda);
+      append(`Created election ${pda}`);
+      append(`Starts ${formatLocal(startTime)} — ${countdownLabel(startTime)}`);
+      append(`Ends ${formatLocal(endTime)}`);
       append(`Tx: ${explorerTxUrl(res.signature, "devnet")}`);
 
       const labels = candidates
@@ -57,10 +97,18 @@ export default function AdminPage() {
         .filter(Boolean);
       for (const [i, label] of labels.entries()) {
         const o = await addOutcome(connection, wallet as any, res.election, label, i);
-        append(`Added outcome ${i}: ${label} (${o.signature})`);
+        append(`Added candidate ${i}: ${label}`);
+        append(`  ${explorerTxUrl(o.signature, "devnet")}`);
       }
+      setChecklist({
+        created: true,
+        candidates: labels.length,
+        registered: 0,
+        startTime,
+        endTime,
+      });
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -79,16 +127,34 @@ export default function AdminPage() {
         .split(/[\s,]+/)
         .map((s) => s.trim())
         .filter(Boolean);
+      if (keys.length === 0) throw new Error("Paste at least one voter pubkey.");
+      let n = 0;
       for (const k of keys) {
         const voter = new PublicKey(k);
-        const r = await registerVoter(connection, wallet as any, election, voter, 1n);
-        append(`Registered ${k} — ${explorerTxUrl(r.signature, "devnet")}`);
+        const r = await registerVoter(
+          connection,
+          wallet as any,
+          election,
+          voter,
+          BigInt(1)
+        );
+        append(`Registered ${k}`);
+        append(`  ${explorerTxUrl(r.signature, "devnet")}`);
+        n += 1;
       }
+      setChecklist((c) => ({ ...c, registered: c.registered + n }));
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }
+  };
+
+  const onCopyPda = async () => {
+    if (!electionPda) return;
+    const ok = await copyText(electionPda);
+    setCopied(ok);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -100,10 +166,19 @@ export default function AdminPage() {
         <WalletMultiButton />
       </div>
       <h1 className="text-3xl font-semibold">Admin</h1>
-      <p className="text-stone-600 mt-2 mb-8">
-        Start time defaults to several minutes in the future so you can add
-        candidates before voting opens.
+      <p className="text-stone-600 mt-2 mb-6">
+        Create the election with a future start so candidates can be added
+        before voting opens. Then register voter wallets and share the election
+        link.
       </p>
+
+      <div className="mb-8 text-sm text-stone-700 bg-white/50 border border-stone-200 px-4 py-3">
+        <p>
+          Planned window: <strong>{formatLocal(preview.start)}</strong> →{" "}
+          <strong>{formatLocal(preview.end)}</strong>
+        </p>
+        <p className="mt-1 text-teal-900">{countdownLabel(preview.start, now)}</p>
+      </div>
 
       <section className="space-y-4 mb-10">
         <label className="block">
@@ -147,9 +222,58 @@ export default function AdminPage() {
           onClick={onCreate}
           className="bg-teal-800 text-white px-4 py-2 disabled:opacity-40"
         >
-          Create election + candidates
+          {busy ? "Working…" : "Create election + candidates"}
         </button>
       </section>
+
+      {(checklist.created || electionPda) && (
+        <section className="mb-10 border border-stone-300 bg-white/60 px-4 py-4 space-y-3">
+          <h2 className="font-medium text-lg">Share & checklist</h2>
+          <ul className="text-sm text-stone-700 space-y-1">
+            <li>{checklist.created ? "✓" : "○"} Election created</li>
+            <li>
+              {checklist.candidates > 0 ? "✓" : "○"} Candidates added (
+              {checklist.candidates})
+            </li>
+            <li>
+              {checklist.registered > 0 ? "✓" : "○"} Voters registered (
+              {checklist.registered})
+            </li>
+            {checklist.startTime != null && (
+              <li className="text-teal-900">
+                {countdownLabel(checklist.startTime, now)} —{" "}
+                {formatLocal(checklist.startTime)}
+              </li>
+            )}
+          </ul>
+          {electionPda && (
+            <div className="space-y-2">
+              <p className="text-xs text-stone-500 break-all font-mono">{electionPda}</p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={onCopyPda}
+                  className="border border-stone-400 px-3 py-1 text-sm"
+                >
+                  {copied ? "Copied" : "Copy PDA"}
+                </button>
+                <Link
+                  href={`/vote?pda=${electionPda}`}
+                  className="border border-teal-800 text-teal-900 px-3 py-1 text-sm"
+                >
+                  Open vote link
+                </Link>
+                <Link
+                  href={`/election?pda=${electionPda}`}
+                  className="border border-teal-800 text-teal-900 px-3 py-1 text-sm"
+                >
+                  Open tally link
+                </Link>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="space-y-4 mb-10">
         <label className="block">
@@ -168,6 +292,7 @@ export default function AdminPage() {
             className="mt-1 w-full border border-stone-300 bg-white/70 px-3 py-2 min-h-28 font-mono text-sm"
             value={voters}
             onChange={(e) => setVoters(e.target.value)}
+            placeholder="Paste Phantom addresses here"
           />
         </label>
         <button

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
@@ -11,6 +11,12 @@ import {
   fetchElection,
   fetchOutcomes,
 } from "@boat/sdk";
+import {
+  countdownLabel,
+  formatLocal,
+  friendlyError,
+  readPdaQuery,
+} from "../../lib/demo";
 
 export default function VotePage() {
   const { connection } = useConnection();
@@ -19,10 +25,26 @@ export default function VotePage() {
   const [outcomes, setOutcomes] = useState<{ index: number; label: string }[]>(
     []
   );
+  const [windowInfo, setWindowInfo] = useState<{
+    title: string;
+    start: number;
+    end: number;
+  } | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [receipt, setReceipt] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const fromQuery = readPdaQuery();
+    if (fromQuery) setElectionStr(fromQuery);
+  }, []);
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(t);
+  }, []);
 
   const election = useMemo(() => {
     try {
@@ -36,27 +58,50 @@ export default function VotePage() {
     setErr(null);
     setBusy(true);
     try {
-      if (!election || !wallet.publicKey) {
-        throw new Error("Connect wallet and paste a valid election PDA.");
+      if (!election) {
+        throw new Error("Paste a valid election PDA.");
+      }
+      if (!wallet.publicKey) {
+        throw new Error("Connect a wallet first.");
       }
       const { election: e } = await fetchElection(
         connection,
         election,
         wallet as any
       );
+      const start = Number(e.startTime ?? e.start_time);
+      const end = Number(e.endTime ?? e.end_time);
+      setWindowInfo({
+        title: String(e.title),
+        start,
+        end,
+      });
       const list = await fetchOutcomes(
         connection,
         election,
-        Number(e.outcomeCount),
+        Number(e.outcomeCount ?? e.outcome_count),
         wallet as any
       );
       setOutcomes(list.map((o) => ({ index: o.index, label: o.label })));
+      if (Date.now() / 1000 < start) {
+        setErr(
+          `Voting has not opened yet. Opens ${formatLocal(start)} (${countdownLabel(start)}).`
+        );
+      }
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }
   }, [connection, election, wallet]);
+
+  useEffect(() => {
+    if (electionStr && wallet.publicKey) {
+      // auto-load when arriving via share link with wallet connected
+      void load();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet.publicKey]);
 
   const submit = useCallback(async () => {
     setErr(null);
@@ -74,7 +119,7 @@ export default function VotePage() {
       );
       setReceipt(explorerTxUrl(res.signature, "devnet"));
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -105,16 +150,36 @@ export default function VotePage() {
       <button
         disabled={busy}
         onClick={load}
-        className="bg-teal-800 text-white px-4 py-2 disabled:opacity-40 mb-8"
+        className="bg-teal-800 text-white px-4 py-2 disabled:opacity-40 mb-6"
       >
-        Load candidates
+        {busy ? "Loading…" : "Load candidates"}
       </button>
+
+      {windowInfo && (
+        <div className="mb-6 text-sm border border-stone-200 bg-white/50 px-4 py-3">
+          <p className="font-medium">{windowInfo.title}</p>
+          <p className="text-stone-600 mt-1">
+            {formatLocal(windowInfo.start)} → {formatLocal(windowInfo.end)}
+          </p>
+          <p className="text-teal-900 mt-1">
+            {countdownLabel(windowInfo.start, now)}
+          </p>
+          {electionStr && (
+            <Link
+              href={`/election?pda=${electionStr}`}
+              className="inline-block mt-2 text-teal-800 underline text-sm"
+            >
+              View public tally
+            </Link>
+          )}
+        </div>
+      )}
 
       {outcomes.length > 0 && (
         <ul className="space-y-2 mb-6">
           {outcomes.map((o) => (
             <li key={o.index}>
-              <label className="flex items-center gap-3 cursor-pointer">
+              <label className="flex items-center gap-3 cursor-pointer border border-transparent hover:border-stone-300 px-2 py-2">
                 <input
                   type="radio"
                   name="candidate"
@@ -122,7 +187,7 @@ export default function VotePage() {
                   onChange={() => setSelected(o.index)}
                 />
                 <span>
-                  {o.index}. {o.label}
+                  {o.label}
                 </span>
               </label>
             </li>
@@ -142,8 +207,13 @@ export default function VotePage() {
       {receipt && (
         <p className="mt-4 text-sm">
           Receipt:{" "}
-          <a className="text-teal-800 underline" href={receipt} target="_blank" rel="noreferrer">
-            {receipt}
+          <a
+            className="text-teal-800 underline break-all"
+            href={receipt}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View on Solana Explorer
           </a>
         </p>
       )}

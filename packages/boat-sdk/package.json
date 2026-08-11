@@ -5,7 +5,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
@@ -17,6 +19,7 @@
     "nostr-tools": "^2.10.4"
   },
   "devDependencies": {
+    "@types/bn.js": "^5.2.0",
     "typescript": "^5.7.3"
   },
   "engines": {
