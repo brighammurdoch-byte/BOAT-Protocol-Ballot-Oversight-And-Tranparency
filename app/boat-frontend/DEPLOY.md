@@ -11,4 +11,10 @@
 #
 # GitHub Pages (CI):
 #   Workflow `.github/workflows/deploy-web.yml` builds the static `out/` folder
-#   on push. Enable Pages → Source: GitHub Actions in repo settings.
+#   on push to `main` / `cursor/**` (or workflow_dispatch).
+#   One-time repo setup (Settings → Pages → Source: GitHub Actions).
+#   Agents cannot enable Pages via API without `pages: write` on the token.
+#
+# After Pages is enabled, expected URL shape:
+#   https://<owner>.github.io/<repo>/
+#   (or the custom domain configured in Pages settings)

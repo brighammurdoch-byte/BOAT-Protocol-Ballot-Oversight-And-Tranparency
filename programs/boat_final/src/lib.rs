@@ -4,6 +4,7 @@ use anchor_spl::{
     token_interface::{self, Mint, MintTo, TokenAccount, TokenInterface},
 };
 
+pub mod verifying_key;
 pub mod zk_verify;
 
 declare_id!("CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ");
