@@ -97,7 +97,7 @@ export default function HomeScreen() {
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>BOAT</Text>
       <Text style={styles.sub}>
-        Ballot Oversight and Transparency — local tally from RPC only.
+        Campus elections on Solana — same USU admin / vote / tally flows as the web app.
       </Text>
 
       <Pressable style={styles.btn} onPress={connect}>
@@ -134,22 +134,10 @@ export default function HomeScreen() {
 
       {err ? <Text style={styles.err}>{err}</Text> : null}
 
-      <Link
-        href={{
-          pathname: "/forum",
-          params: electionStr.trim() ? { election: electionStr.trim() } : {},
-        }}
-        asChild
-      >
-        <Pressable style={[styles.btn, styles.secondary]}>
-          <Text style={styles.btnTextDark}>Election forum (Nostr)</Text>
-        </Pressable>
-      </Link>
-
-      <Text style={[styles.label, { marginTop: 10 }]}>Actions</Text>
+      <Text style={[styles.label, { marginTop: 10 }]}>USU election actions</Text>
       <Link href="/create-election" asChild>
         <Pressable style={[styles.btn, styles.secondary]}>
-          <Text style={styles.btnTextDark}>Create / initialize election</Text>
+          <Text style={styles.btnTextDark}>Admin: create election</Text>
         </Pressable>
       </Link>
       <Link
@@ -160,7 +148,7 @@ export default function HomeScreen() {
         asChild
       >
         <Pressable style={[styles.btn, styles.secondary]}>
-          <Text style={styles.btnTextDark}>Add outcome (candidate)</Text>
+          <Text style={styles.btnTextDark}>Admin: add candidate</Text>
         </Pressable>
       </Link>
       <Link
@@ -171,7 +159,7 @@ export default function HomeScreen() {
         asChild
       >
         <Pressable style={[styles.btn, styles.secondary]}>
-          <Text style={styles.btnTextDark}>Register voter</Text>
+          <Text style={styles.btnTextDark}>Admin: register voter</Text>
         </Pressable>
       </Link>
       <Link
@@ -182,18 +170,18 @@ export default function HomeScreen() {
         asChild
       >
         <Pressable style={[styles.btn, styles.secondary]}>
-          <Text style={styles.btnTextDark}>Cast vote</Text>
+          <Text style={styles.btnTextDark}>Voter: cast ballot</Text>
         </Pressable>
       </Link>
       <Link
         href={{
-          pathname: "/delegate",
+          pathname: "/forum",
           params: electionStr.trim() ? { election: electionStr.trim() } : {},
         }}
         asChild
       >
         <Pressable style={[styles.btn, styles.secondary]}>
-          <Text style={styles.btnTextDark}>Delegate vote</Text>
+          <Text style={styles.btnTextDark}>Forum (optional Nostr)</Text>
         </Pressable>
       </Link>
     </ScrollView>

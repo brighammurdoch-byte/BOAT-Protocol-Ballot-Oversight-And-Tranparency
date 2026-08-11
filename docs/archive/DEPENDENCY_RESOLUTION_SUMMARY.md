@@ -1,3 +1,5 @@
+> **Historical (March 2026).** Applies only to the archived Anchor 0.29 program. The live program uses Anchor 1.1.2 with a thin Cargo.toml — do not re-apply these pins.
+
 # Dependency Resolution Summary & Build Constraints
 
 **Date:** March 5, 2026

@@ -1,17 +1,41 @@
 import { PublicKey, clusterApiUrl, Connection, Transaction } from "@solana/web3.js";
 import { transact } from "@solana-mobile/mobile-wallet-adapter-protocol-web3js";
 
+export type BoatCluster = "devnet" | "mainnet-beta" | "testnet";
+
+export function rpcEndpoint(): string {
+  // Expo public env, e.g. EXPO_PUBLIC_SOLANA_RPC=https://api.devnet.solana.com
+  const fromEnv =
+    (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_SOLANA_RPC) ||
+    "";
+  if (fromEnv) return fromEnv;
+  return clusterApiUrl("devnet");
+}
+
+export function clusterLabel(): BoatCluster {
+  const rpc = rpcEndpoint();
+  if (rpc.includes("mainnet")) return "mainnet-beta";
+  if (rpc.includes("testnet")) return "testnet";
+  return "devnet";
+}
+
+export function boatConnection() {
+  return new Connection(rpcEndpoint(), "confirmed");
+}
+
+/** @deprecated use boatConnection */
 export function devnetConnection() {
-  return new Connection(clusterApiUrl("devnet"), "confirmed");
+  return boatConnection();
 }
 
 export async function withMobileWallet<T>(
   fn: (args: { connection: Connection; publicKey: PublicKey; wallet: any }) => Promise<T>
 ): Promise<T> {
-  const connection = devnetConnection();
+  const connection = boatConnection();
+  const cluster = clusterLabel();
   return await transact(async (mobileWallet) => {
     const auth = await mobileWallet.authorize({
-      cluster: "devnet",
+      cluster,
       identity: { name: "BOAT", uri: "https://boatprotocol.org" },
     });
     const addr = auth.accounts[0]?.address;
@@ -42,4 +66,3 @@ export function parsePubkeyOrNull(s: string): PublicKey | null {
     return null;
   }
 }
-

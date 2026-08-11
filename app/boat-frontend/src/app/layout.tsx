@@ -1,22 +1,22 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Fraunces, Source_Sans_3 } from "next/font/google";
 import "./globals.css";
 import BoatWalletProvider from "../providers/BoatWalletProvider";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const display = Fraunces({
+  variable: "--font-fraunces",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const sans = Source_Sans_3({
+  variable: "--font-source-sans",
   subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
-  title: "BOAT — Ballot Oversight and Transparency",
+  title: "BOAT — Ballot Oversight And Transparency",
   description:
-    "Read-only Solana voting UI: tally and verify from RPC. No BOAT backend.",
+    "Campus elections on Solana: create, vote, and independently verify tallies.",
   manifest: "/manifest.webmanifest",
 };
 
@@ -26,11 +26,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col bg-slate-950 text-slate-100">
+    <html lang="en" className={`${display.variable} ${sans.variable} h-full antialiased`}>
+      <body className="min-h-full flex flex-col text-stone-900">
         <BoatWalletProvider>{children}</BoatWalletProvider>
       </body>
     </html>

@@ -1,63 +1,27 @@
-# BOAT Protocol: Ballot Oversight and Transparency
+# BOAT
 
-[![Solana](https://img.shields.io/badge/Built%20on-Solana-00d1b2?logo=solana&logoColor=white)](https://solana.com)
-[![Anchor](https://img.shields.io/badge/Framework-Anchor-9933ff)](https://www.anchor-lang.com)
+**Ballot Oversight And Transparency** — a Solana side project for transparent campus elections (e.g. USU school officers), with a path to ZK privacy later.
 
-**BOAT Protocol** is a full-fledged, on-chain voting system built on the **Solana blockchain** for maximum transparency, verifiability, and efficiency. Votes are recorded immutably on-chain, ensuring auditability and resistance to tampering.
+This is **not** a DAO governance protocol. Token-weighted / corporate voting surfaces were removed in the Anchor 1.x rebuild.
 
-**Initial focus:** Corporate elections (e.g., shareholder voting, board decisions).  
-**Long-term vision:** A flexible protocol for **any type of voting** — DAOs, community polls, elections, governance, etc.
+## What’s in the repo
 
-**Status:** Early development / heavy demoing phase. Core smart contract logic is in progress with Anchor and Rust.
+| Piece | Path |
+|-------|------|
+| On-chain program (Anchor **1.1.2**) | `programs/boat_final` |
+| TypeScript SDK | `packages/boat-sdk` |
+| Web Dapp | `app/boat-frontend` |
+| HTTP API (read + tx build) | `apps/api` |
+| Mobile (same USU UX) | `apps/mobile` |
+| USU quickstart | [`QUICKSTART_USU.md`](QUICKSTART_USU.md) |
+| ZK plan | [`docs/ZK_ROADMAP.md`](docs/ZK_ROADMAP.md) |
 
-## Features (Current & Planned)
-- Immutable on-chain vote casting and tallying
-- Soulbound Tokens (SBTs) for voter authentication & eligibility (via `sbt_mint.json` integration)
-- Transparent audit trails — every vote verifiable via Solana explorer
-- Admin controls (e.g., election init, candidate management)
-- Modular design: Easily extend to different voting types
-- Potential frontend/client (TypeScript/Node) for user interaction
-- Archived prototypes & Python helpers for testing/experimentation
+## Quick links
 
-## Frontend status
-- See `FRONTEND_STATUS.md` for what’s implemented vs pending for:
-  - Web/PWA (`app/boat-frontend`)
-  - Mobile (Expo) (`apps/mobile`)
+- Build / test / deploy: [`QUICKSTART_USU.md`](QUICKSTART_USU.md)
+- Modern toolchain notes: [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md)
+- Historical 0.29 dependency hell (do not revive): [`docs/archive/DEPENDENCY_RESOLUTION_SUMMARY.md`](docs/archive/DEPENDENCY_RESOLUTION_SUMMARY.md)
 
-## Tech Stack
-- **Blockchain**: Solana
-- **Smart Contract Framework**: Anchor
-- **Program Language**: Rust
-- **Backend**: Rust (via Anchor/Cargo)
-- **Frontend/CLI**: TypeScript/JavaScript (Node.js, Yarn)
-- **Other**: Python (prototypes & utils), JSON configs (admin, SBT minting)
+## Status
 
-## Setup Instructions (Windows Users)
-To build the smart contract (`anchor build`), you must use **WSL (Windows Subsystem for Linux)**.
-
-1. **Install Ubuntu:**
-   ```powershell
-   wsl --install -d Ubuntu
-   ```
-2. **Reboot your computer.**
-3. **Open Ubuntu** from your Start Menu and run the following commands inside the Linux terminal:
-
-   **A. Install Rust:**
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   # (Type 1 and press Enter when prompted)
-   source "$HOME/.cargo/env"
-   ```
-
-   **B. Install Solana:**
-   ```bash
-   sh -c "$(curl -sSfL https://release.solana.com/v1.18.18/install)"
-   export PATH="/home/$(whoami)/.local/share/solana/install/active_release/bin:$PATH"
-   ```
-
-   **C. Install Anchor:**
-   ```bash
-   cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
-   avm install latest
-   avm use latest
-   ```
+Transparent MVP: authority registration, outcomes, cast/change vote, client-side tally, web + API + mobile. ZK is scaffolded as the next privacy phase.

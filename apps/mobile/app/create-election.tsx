@@ -7,9 +7,12 @@ import { withMobileWallet } from "../lib/solana";
 export default function CreateElectionScreen() {
   const router = useRouter();
   const [title, setTitle] = useState("");
-  const [startTs, setStartTs] = useState(() => String(Math.floor(Date.now() / 1000)));
+  // Default start ~5 minutes in the future so candidates can be added first.
+  const [startTs, setStartTs] = useState(() =>
+    String(Math.floor(Date.now() / 1000) + 5 * 60)
+  );
   const [endTs, setEndTs] = useState(() =>
-    String(Math.floor(Date.now() / 1000) + 60 * 60)
+    String(Math.floor(Date.now() / 1000) + 24 * 60 * 60)
   );
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState("");
