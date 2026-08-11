@@ -34,6 +34,8 @@ jobs:
         working-directory: app/boat-frontend
         env:
           NEXT_PUBLIC_SOLANA_RPC: https://api.devnet.solana.com
+          # Must match the GitHub Pages project path (/<repo>)
+          NEXT_PUBLIC_BASE_PATH: /BOAT-Protocol-Ballot-Oversight-And-Tranparency
         run: npm ci && npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -42,8 +44,6 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    # Fails with 404 until repo Settings → Pages → Source: GitHub Actions is set.
-    continue-on-error: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
