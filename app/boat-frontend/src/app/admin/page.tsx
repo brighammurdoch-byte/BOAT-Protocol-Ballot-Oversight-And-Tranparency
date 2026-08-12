@@ -50,7 +50,7 @@ export default function AdminPage() {
     candidates: 0,
     registered: 0,
   });
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
     const fromQuery = readPdaQuery();
@@ -58,12 +58,15 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 15000);
+    const tick = () => setNow(Date.now());
+    tick();
+    const t = setInterval(tick, 15000);
     return () => clearInterval(t);
   }, []);
 
   const preview = useMemo(() => {
-    const start = Math.floor(Date.now() / 1000) + Math.max(1, startInMin) * 60;
+    const base = now ?? 0;
+    const start = Math.floor(base / 1000) + Math.max(1, startInMin) * 60;
     const end = start + Math.max(1, durationHours) * 3600;
     return { start, end };
   }, [startInMin, durationHours, now]);
@@ -212,11 +215,17 @@ export default function AdminPage() {
       </p>
 
       <div className="mb-8 text-sm text-stone-700 bg-white/50 border border-stone-200 px-4 py-3">
-        <p>
-          Planned window: <strong>{formatLocal(preview.start)}</strong> →{" "}
-          <strong>{formatLocal(preview.end)}</strong>
-        </p>
-        <p className="mt-1 text-teal-900">{countdownLabel(preview.start, now)}</p>
+        {now == null ? (
+          <p>Calculating election window…</p>
+        ) : (
+          <>
+            <p>
+              Planned window: <strong>{formatLocal(preview.start)}</strong> →{" "}
+              <strong>{formatLocal(preview.end)}</strong>
+            </p>
+            <p className="mt-1 text-teal-900">{countdownLabel(preview.start, now)}</p>
+          </>
+        )}
       </div>
 
       <section className="space-y-4 mb-10">
@@ -257,7 +266,7 @@ export default function AdminPage() {
           />
         </label>
         <button
-          disabled={!canWrite || busy}
+          disabled={!canWrite || busy || now == null}
           onClick={onCreate}
           className="bg-teal-800 text-white px-4 py-2 disabled:opacity-40"
         >
@@ -278,7 +287,7 @@ export default function AdminPage() {
               {checklist.registered > 0 ? "✓" : "○"} Voters registered (
               {checklist.registered})
             </li>
-            {checklist.startTime != null && (
+            {checklist.startTime != null && now != null && (
               <li className="text-teal-900">
                 {countdownLabel(checklist.startTime, now)} —{" "}
                 {formatLocal(checklist.startTime)}

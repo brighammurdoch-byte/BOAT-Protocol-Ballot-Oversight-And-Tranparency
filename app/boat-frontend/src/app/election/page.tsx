@@ -52,6 +52,7 @@ export default function ElectionTallyPage() {
 
   const load = useCallback(async () => {
     setErr(null);
+    setView(null);
     setBusy(true);
     try {
       if (!election) throw new Error("Paste a valid election PDA.");
@@ -70,10 +71,14 @@ export default function ElectionTallyPage() {
           election,
           dummy
         );
-        quorumPct = Number(config.quorumPercentage ?? config.quorum_percentage ?? 33);
+        quorumPct = Number(
+          config.quorumPercentage ?? config.quorum_percentage ?? 33
+        );
         outcomeCount = Number(e.outcomeCount ?? e.outcome_count ?? 0);
       } catch {
-        // keep default
+        throw new Error(
+          "Election or voter account not found on this cluster. Check the PDA and that you are on Solana Devnet."
+        );
       }
 
       const { data: priv } = await fetchPrivateConfig(connection, election, dummy);
@@ -145,9 +150,9 @@ export default function ElectionTallyPage() {
   }, [connection, election, wallet]);
 
   useEffect(() => {
-    if (electionStr) void load();
+    if (election) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [election]);
 
   const maxWeight = view?.totals[0]?.weight ?? 1n;
 

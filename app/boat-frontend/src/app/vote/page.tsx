@@ -111,11 +111,11 @@ export default function VotePage() {
   }, [connection, election, wallet]);
 
   useEffect(() => {
-    if (electionStr && wallet.publicKey) {
+    if (election && wallet.publicKey) {
       void load();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallet.publicKey]);
+  }, [election, wallet.publicKey]);
 
   const submit = useCallback(async () => {
     setErr(null);

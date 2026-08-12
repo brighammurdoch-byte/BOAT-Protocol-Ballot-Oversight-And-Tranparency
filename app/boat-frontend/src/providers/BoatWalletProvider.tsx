@@ -64,7 +64,7 @@ export default function BoatWalletProvider({
   }, []);
 
   const autoConnect = useCallback(
-    (adapter: Adapter) => SUPPORTED.has(adapter.name),
+    async (adapter: Adapter) => SUPPORTED.has(adapter.name),
     []
   );
 

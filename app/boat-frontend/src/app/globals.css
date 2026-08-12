@@ -30,8 +30,14 @@ h1, h2, h3 {
 button.wallet-adapter-button.wallet-adapter-button-trigger {
   white-space: nowrap !important;
   flex-shrink: 0;
-  min-width: 10.5rem;
+  min-width: 8.5rem;
   line-height: 48px !important;
+}
+
+@media (min-width: 640px) {
+  button.wallet-adapter-button.wallet-adapter-button-trigger {
+    min-width: 10.5rem;
+  }
 }
 
 .wallet-adapter-modal-wrapper {

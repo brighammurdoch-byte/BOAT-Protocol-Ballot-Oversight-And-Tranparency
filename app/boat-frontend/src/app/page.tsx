@@ -5,11 +5,11 @@ import BoatWalletButton from "../components/BoatWalletButton";
 
 export default function Home() {
   return (
-    <main className="min-h-screen px-6 py-10 max-w-3xl mx-auto">
-      <header className="flex items-start justify-between gap-4 mb-12">
-        <div>
+    <main className="min-h-screen px-6 py-10 max-w-3xl mx-auto overflow-x-hidden">
+      <header className="flex flex-wrap items-start justify-between gap-4 mb-12">
+        <div className="min-w-0 flex-1">
           <p className="text-sm tracking-[0.2em] uppercase text-teal-800/80">BOAT</p>
-          <h1 className="text-4xl font-semibold text-stone-900 mt-1">
+          <h1 className="text-3xl sm:text-4xl font-semibold text-stone-900 mt-1">
             Ballot Oversight And Transparency
           </h1>
           <p className="mt-3 text-stone-600 max-w-xl">
