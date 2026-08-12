@@ -2,9 +2,15 @@
   "name": "BOAT",
   "short_name": "BOAT",
   "description": "Ballot Oversight and Transparency — Solana voting UI",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#020617",
   "theme_color": "#2563eb",
-  "icons": []
+  "icons": [
+    {
+      "src": "./favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
+    }
+  ]
 }
