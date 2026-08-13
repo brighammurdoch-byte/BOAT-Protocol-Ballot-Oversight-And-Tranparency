@@ -648,4 +648,12 @@ export function explorerTxUrl(signature: string, cluster: "devnet" | "localnet" 
   return `https://explorer.solana.com/tx/${signature}${clusterParam}`;
 }
 
+export function explorerAddressUrl(
+  address: string,
+  cluster: "devnet" | "localnet" | "mainnet-beta" = "devnet"
+) {
+  const clusterParam = cluster === "mainnet-beta" ? "" : `?cluster=${cluster}`;
+  return `https://explorer.solana.com/address/${address}${clusterParam}`;
+}
+
 export type { TransactionInstruction };

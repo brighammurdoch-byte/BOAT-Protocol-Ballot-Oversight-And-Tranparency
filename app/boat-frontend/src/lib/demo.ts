@@ -32,6 +32,14 @@ export function friendlyError(err: unknown): string {
   if (lower.includes("already in use") || lower.includes("already been processed")) {
     return "This account may already exist (duplicate title or already registered). Try a new title or skip that voter.";
   }
+  if (
+    lower.includes("blockhash not found") ||
+    lower.includes("failed to simulate") ||
+    lower.includes("simulation failed") ||
+    lower.includes("proceeding is unsafe")
+  ) {
+    return "The transaction was not sent. Phantom could not simulate it — usually Phantom is not on Devnet, or the BOAT program is not deployed on this cluster. Switch Phantom to Devnet and check Explorer; if nothing new appears under your wallet, nothing landed.";
+  }
   return raw;
 }
 
@@ -59,6 +67,10 @@ export function readPdaQuery(): string {
   } catch {
     return "";
   }
+}
+
+export function explorerWalletUrl(address: string): string {
+  return `https://explorer.solana.com/address/${address}?cluster=devnet`;
 }
 
 export async function copyText(text: string): Promise<boolean> {

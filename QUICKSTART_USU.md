@@ -2,7 +2,7 @@
 
 BOAT is a **side project** for transparent student officer elections on Solana (devnet first). DAO token voting is out of scope. ZK privacy is in progress (`docs/ZK_STATUS.md`).
 
-Program id (rebuild): `CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ`
+Program id (rebuild): `DgVtAKNDKiTYUowPBsXfDnv7Seq5hE3NsP1oMDexCoid`
 
 (Prior transparent-onlydevnet binary: `HFr5VbxjxszddWUUaayzbxQ2onD6EzfNcCG2hTXQ8ga6`.)
 

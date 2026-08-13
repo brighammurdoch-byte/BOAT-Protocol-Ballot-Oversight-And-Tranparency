@@ -29,4 +29,4 @@ Transparent MVP: authority registration, outcomes, cast/change vote, client-side
 
 Private ballot v0: optional `enable_private_ballots` + `cast_vote_zk` (nullifier PDA + aggregate tallies). Transparent `cast_vote` remains the default. See [`docs/ZK_STATUS.md`](docs/ZK_STATUS.md).
 
-Program id (ZK-enabled rebuild): `CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ`
+Program id (ZK-enabled rebuild): `DgVtAKNDKiTYUowPBsXfDnv7Seq5hE3NsP1oMDexCoid`

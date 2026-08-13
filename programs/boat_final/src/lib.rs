@@ -7,7 +7,7 @@ use anchor_spl::{
 pub mod verifying_key;
 pub mod zk_verify;
 
-declare_id!("CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ");
+declare_id!("DgVtAKNDKiTYUowPBsXfDnv7Seq5hE3NsP1oMDexCoid");
 
 /// Authority-only registration (USU MVP default).
 pub const REGISTRATION_AUTHORITY_ONLY: u8 = 0;

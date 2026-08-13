@@ -24,14 +24,16 @@ import {
 } from "@solana/spl-token";
 import { createRequire } from "module";
 import BN from "bn.js";
-import idl from "../target/idl/boat_final.json";
 
 const require = createRequire(import.meta.url);
+const idl = require("../packages/boat-sdk/src/idl/boat_final.json");
 const anchor = require("@anchor-lang/core");
 const { AnchorProvider, Program, Wallet } = anchor;
 
 function loadKeypair(): Keypair {
-  const p = path.join(os.homedir(), ".config", "solana", "id.json");
+  const p =
+    process.env.SOLANA_KEYPAIR ??
+    path.join(os.homedir(), ".config", "solana", "id.json");
   const raw = JSON.parse(fs.readFileSync(p, "utf8"));
   return Keypair.fromSecretKey(Uint8Array.from(raw));
 }

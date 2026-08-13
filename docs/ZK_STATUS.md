@@ -33,7 +33,7 @@ Unchanged from v0: `PrivateBallotConfig`, `NullifierRecord`, `PrivateOutcomeTall
 
 ### Program id
 
-`CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ` (keypair in `keys/`).
+`DgVtAKNDKiTYUowPBsXfDnv7Seq5hE3NsP1oMDexCoid` (keypair in `keys/`).
 
 Deploy (needs ~2.2+ SOL on the deployer wallet):
 

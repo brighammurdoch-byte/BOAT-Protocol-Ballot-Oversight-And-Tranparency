@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-boat_final = "CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ"
+boat_final = "DgVtAKNDKiTYUowPBsXfDnv7Seq5hE3NsP1oMDexCoid"
 
 [programs.devnet]
-boat_final = "CjFvbqigpnjPQFZKYHQDGa1jpYtnBxZaaVjWKjg3anZ"
+boat_final = "DgVtAKNDKiTYUowPBsXfDnv7Seq5hE3NsP1oMDexCoid"
 
 [provider]
 cluster = "Localnet"

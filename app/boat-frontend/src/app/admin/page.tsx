@@ -6,6 +6,7 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BoatWalletButton from "../../components/BoatWalletButton";
 import { PublicKey } from "@solana/web3.js";
 import {
+  DEFAULT_BOAT_PROGRAM_ID,
   initializeElection,
   addOutcome,
   registerVoter,
@@ -15,6 +16,7 @@ import {
 import {
   copyText,
   countdownLabel,
+  explorerWalletUrl,
   formatLocal,
   friendlyError,
   readPdaQuery,
@@ -51,11 +53,27 @@ export default function AdminPage() {
     registered: 0,
   });
   const [now, setNow] = useState<number | null>(null);
+  const [programMissing, setProgramMissing] = useState(false);
 
   useEffect(() => {
     const fromQuery = readPdaQuery();
     if (fromQuery) setElectionPda(fromQuery);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void connection.getAccountInfo(DEFAULT_BOAT_PROGRAM_ID).then(
+      (info) => {
+        if (!cancelled) setProgramMissing(!info);
+      },
+      () => {
+        if (!cancelled) setProgramMissing(true);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [connection]);
 
   useEffect(() => {
     const tick = () => setNow(Date.now());
@@ -211,8 +229,38 @@ export default function AdminPage() {
       <p className="text-stone-600 mt-2 mb-6">
         Create the election with a future start so candidates can be added
         before voting opens. Then register voter wallets and share the election
-        link.
+        link. Phantom must be on <strong>Devnet</strong>.
       </p>
+
+      {programMissing && (
+        <p className="mb-6 text-sm text-red-800 bg-red-50 border border-red-200 px-3 py-2">
+          The BOAT program is not on Solana Devnet (
+          <a
+            className="underline break-all"
+            href={explorerWalletUrl(DEFAULT_BOAT_PROGRAM_ID.toBase58())}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {DEFAULT_BOAT_PROGRAM_ID.toBase58()}
+          </a>
+          ). Phantom will fail simulation and nothing will land until this
+          program is deployed.
+        </p>
+      )}
+
+      {wallet.publicKey && (
+        <p className="mb-6 text-sm text-stone-600">
+          Connected wallet:{" "}
+          <a
+            className="text-teal-800 underline break-all"
+            href={explorerWalletUrl(wallet.publicKey.toBase58())}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View on Solana Explorer (Devnet)
+          </a>
+        </p>
+      )}
 
       <div className="mb-8 text-sm text-stone-700 bg-white/50 border border-stone-200 px-4 py-3">
         {now == null ? (
