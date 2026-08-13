@@ -1,2 +1,2 @@
-:HL["/BOAT-Protocol-Ballot-Oversight-And-Tranparency/_next/static/css/8ab55e8589659dd6.css","style"]
-0:{"tree":{"name":"","param":null,"prefetchHints":16,"slots":{"children":{"name":"admin","param":null,"prefetchHints":0,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":0,"slots":null}}}}},"staleTime":300,"buildId":"K2x9kCGFK4OVxEjijSieT"}
+:HL["/BOAT-Protocol-Ballot-Oversight-And-Tranparency/_next/static/css/68f6bfed4000e72e.css","style"]
+0:{"tree":{"name":"","param":null,"prefetchHints":16,"slots":{"children":{"name":"admin","param":null,"prefetchHints":0,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":0,"slots":null}}}}},"staleTime":300,"buildId":"Z1Mc_y9f90cswa2nhT9rV"}
