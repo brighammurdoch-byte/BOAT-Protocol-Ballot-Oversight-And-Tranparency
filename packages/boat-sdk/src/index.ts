@@ -3,24 +3,38 @@ import {
   type Connection,
   SystemProgram,
   SYSVAR_RENT_PUBKEY,
+  Transaction,
+  TransactionInstruction,
 } from "@solana/web3.js";
+import type { AnchorWalletLike } from "./wallet";
+import {
+  sendAndConfirmInstructions,
+  waitForAccount,
+  waitUntilSimulates,
+} from "./tx";
+import { parseCandidateLabels, remainingCandidateLabels } from "./helpers";
 import {
   AnchorProvider,
-  BN,
   BorshAccountsCoder,
   Program,
   type Idl,
-} from "@coral-xyz/anchor";
+} from "@anchor-lang/core";
+import BN from "bn.js";
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+  getAssociatedTokenAddress,
+} from "@solana/spl-token";
 import boatIdl from "./idl/boat_final.json";
 import { listForumPosts, publishForumPost } from "./nostr";
 import { BOAT_ELECTION_TAG, DEFAULT_FORUM_RELAYS } from "./constants";
 
 export const BOAT_IDL = boatIdl as unknown as Idl;
 const PROGRAM_ADDRESS: string =
-  (boatIdl as any).metadata?.address ?? (boatIdl as any).address;
+  (boatIdl as any).address ?? (boatIdl as any).metadata?.address;
 export const DEFAULT_BOAT_PROGRAM_ID = new PublicKey(PROGRAM_ADDRESS);
 
-export { BOAT_ELECTION_TAG, DEFAULT_FORUM_RELAYS };
+export { BOAT_ELECTION_TAG, DEFAULT_FORUM_RELAYS, TOKEN_2022_PROGRAM_ID };
 
 export const PDA_SEEDS = {
   election: "election",
@@ -28,72 +42,144 @@ export const PDA_SEEDS = {
   mint: "mint",
   voterRegistry: "voter_registry",
   outcome: "outcome",
+  private: "private",
+  nullifier: "nullifier",
+  privateTally: "private_tally",
 } as const;
 
-export type AnchorWalletLike = {
-  publicKey: PublicKey;
-  signTransaction: (tx: any) => Promise<any>;
-  signAllTransactions: (txs: any[]) => Promise<any[]>;
-};
+export type { AnchorWalletLike } from "./wallet";
+export {
+  CANDIDATE_SETUP_LEAD_SEC,
+  computeElectionWindow,
+  parseCandidateLabels,
+  parseVoterKeys,
+  remainingCandidateLabels,
+  totalsWithAllCandidates,
+} from "./helpers";
+export {
+  formatSimulationError,
+  sendAndConfirmInstructions,
+  waitForAccount,
+} from "./tx";
 
 export function getBoatProgram(
   connection: Connection,
   wallet: AnchorWalletLike,
-  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+  _programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
 ) {
   const provider = new AnchorProvider(connection, wallet as any, {
     commitment: "confirmed",
+    preflightCommitment: "confirmed",
   });
-  return new Program(BOAT_IDL, programId, provider);
+  // Anchor 1.x: Program(idl, provider) — address comes from IDL
+  return new Program(BOAT_IDL, provider);
 }
 
-export function pdaElection(authority: PublicKey, title: string) {
+export function pdaElection(
+  authority: PublicKey,
+  title: string,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from(PDA_SEEDS.election),
       authority.toBuffer(),
       Buffer.from(title),
     ],
-    DEFAULT_BOAT_PROGRAM_ID
+    programId
   );
 }
 
-export function pdaElectionConfig(election: PublicKey) {
+export function pdaElectionConfig(
+  election: PublicKey,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
   return PublicKey.findProgramAddressSync(
     [Buffer.from(PDA_SEEDS.config), election.toBuffer()],
-    DEFAULT_BOAT_PROGRAM_ID
+    programId
   );
 }
 
-export function pdaSbtMint(election: PublicKey) {
+export function pdaSbtMint(
+  election: PublicKey,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
   return PublicKey.findProgramAddressSync(
     [Buffer.from(PDA_SEEDS.mint), election.toBuffer()],
-    DEFAULT_BOAT_PROGRAM_ID
+    programId
   );
 }
 
-export function pdaVoterRegistry(election: PublicKey, voter: PublicKey) {
+export function pdaVoterRegistry(
+  election: PublicKey,
+  voter: PublicKey,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
   return PublicKey.findProgramAddressSync(
     [Buffer.from(PDA_SEEDS.voterRegistry), election.toBuffer(), voter.toBuffer()],
-    DEFAULT_BOAT_PROGRAM_ID
+    programId
   );
 }
 
-export function pdaOutcome(election: PublicKey, outcomeIndex: number) {
+export function pdaOutcome(
+  election: PublicKey,
+  outcomeIndex: number,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from(PDA_SEEDS.outcome),
       election.toBuffer(),
       Buffer.from([outcomeIndex & 0xff]),
     ],
-    DEFAULT_BOAT_PROGRAM_ID
+    programId
+  );
+}
+
+export function pdaPrivateConfig(
+  election: PublicKey,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from(PDA_SEEDS.private), election.toBuffer()],
+    programId
+  );
+}
+
+export function pdaNullifier(
+  election: PublicKey,
+  nullifier: Uint8Array,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from(PDA_SEEDS.nullifier),
+      election.toBuffer(),
+      Buffer.from(nullifier),
+    ],
+    programId
+  );
+}
+
+export function pdaPrivateTally(
+  election: PublicKey,
+  outcomeIndex: number,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from(PDA_SEEDS.privateTally),
+      election.toBuffer(),
+      Buffer.from([outcomeIndex & 0xff]),
+    ],
+    programId
   );
 }
 
 export type CreateElectionArgs = {
   title: string;
-  startTime: number; // unix seconds
-  endTime: number; // unix seconds
+  startTime: number;
+  endTime: number;
 };
 
 export async function initializeElection(
@@ -103,11 +189,11 @@ export async function initializeElection(
   programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
 ) {
   const program = getBoatProgram(connection, wallet, programId);
-  const [election] = pdaElection(wallet.publicKey, args.title);
-  const [electionConfig] = pdaElectionConfig(election);
-  const [sbtMint] = pdaSbtMint(election);
+  const [election] = pdaElection(wallet.publicKey, args.title, programId);
+  const [electionConfig] = pdaElectionConfig(election, programId);
+  const [sbtMint] = pdaSbtMint(election, programId);
 
-  const sig = await program.methods
+  const ix = await program.methods
     .initializeElection(args.title, new BN(args.startTime), new BN(args.endTime))
     .accounts({
       authority: wallet.publicKey,
@@ -118,8 +204,10 @@ export async function initializeElection(
       tokenProgram: TOKEN_2022_PROGRAM_ID,
       rent: SYSVAR_RENT_PUBKEY,
     } as any)
-    .rpc();
-
+    .instruction();
+  const sig = await sendAndConfirmInstructions(connection, wallet, [ix], {
+    waitFor: [election],
+  });
   return { signature: sig, election, electionConfig, sbtMint };
 }
 
@@ -132,8 +220,8 @@ export async function addOutcome(
   programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
 ) {
   const program = getBoatProgram(connection, wallet, programId);
-  const [outcome] = pdaOutcome(election, outcomeIndex);
-  const sig = await program.methods
+  const [outcome] = pdaOutcome(election, outcomeIndex, programId);
+  const ix = await program.methods
     .addOutcome(label, outcomeIndex)
     .accounts({
       authority: wallet.publicKey,
@@ -141,8 +229,134 @@ export async function addOutcome(
       outcome,
       systemProgram: SystemProgram.programId,
     } as any)
-    .rpc();
+    .instruction();
+  const sig = await sendAndConfirmInstructions(connection, wallet, [ix]);
+  await waitForAccount(connection, outcome);
   return { signature: sig, outcome };
+}
+
+async function buildAddOutcomeIx(
+  connection: Connection,
+  wallet: AnchorWalletLike,
+  election: PublicKey,
+  label: string,
+  outcomeIndex: number,
+  programId: PublicKey
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const [outcome] = pdaOutcome(election, outcomeIndex, programId);
+  const ix = await program.methods
+    .addOutcome(label, outcomeIndex)
+    .accounts({
+      authority: wallet.publicKey,
+      election,
+      outcome,
+      systemProgram: SystemProgram.programId,
+    } as any)
+    .instruction();
+  return { ix, outcome };
+}
+
+/**
+ * Add every remaining candidate in **one** transaction.
+ * Phantom simulates the whole batch, so index 2 does not see a stale
+ * `outcome_count` from an unconfirmed prior add.
+ */
+export async function addOutcomes(
+  connection: Connection,
+  wallet: AnchorWalletLike,
+  election: PublicKey,
+  labels: string[],
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const clean = labels.map((s) => s.trim()).filter(Boolean);
+  if (clean.length === 0) {
+    return { signature: "", outcomes: [] as PublicKey[], added: 0, skipped: true };
+  }
+  await waitForAccount(connection, election);
+  const program = getBoatProgram(connection, wallet, programId);
+  const data = await (program.account as any).election.fetch(election);
+  const have = Number(data.outcomeCount ?? data.outcome_count ?? 0);
+  const toAdd = remainingCandidateLabels(clean, have);
+  if (toAdd.length === 0) {
+    return { signature: "", outcomes: [] as PublicKey[], added: 0, skipped: true };
+  }
+
+  const built = [];
+  for (let i = 0; i < toAdd.length; i++) {
+    built.push(
+      await buildAddOutcomeIx(
+        connection,
+        wallet,
+        election,
+        toAdd[i],
+        have + i,
+        programId
+      )
+    );
+  }
+  const ixs = built.map((b) => b.ix);
+  // Do not open Phantom until the prior create (and outcome_count) is visible.
+  await waitUntilSimulates(connection, wallet, ixs);
+  const sig = await sendAndConfirmInstructions(connection, wallet, ixs, {
+    waitFor: built.map((b) => b.outcome),
+  });
+  return {
+    signature: sig,
+    outcomes: built.map((b) => b.outcome),
+    added: toAdd.length,
+    skipped: false,
+  };
+}
+
+/**
+ * Two wallet prompts, never more:
+ *   1. initialize_election (wait until the PDA is fetchable)
+ *   2. every remaining add_outcome in **one** transaction
+ *
+ * Do not pack initialize + adds together — Token-2022 mint init plus three
+ * candidate PDAs is what Phantom hard-blocks (first click lands nothing).
+ * Do not send add_N until add_{N-1} is confirmed; the program requires
+ * `outcome_count == index` at simulation time.
+ */
+export async function initializeElectionWithOutcomes(
+  connection: Connection,
+  wallet: AnchorWalletLike,
+  args: CreateElectionArgs & { candidateLabels: string[] },
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const labels = parseCandidateLabels(args.candidateLabels.join("\n"));
+  const [election] = pdaElection(wallet.publicKey, args.title, programId);
+  const [electionConfig] = pdaElectionConfig(election, programId);
+  const [sbtMint] = pdaSbtMint(election, programId);
+
+  const existing = await connection.getAccountInfo(election, "confirmed");
+  const signatures: string[] = [];
+  let reusedExisting = Boolean(existing);
+
+  if (!existing) {
+    const created = await initializeElection(connection, wallet, args, programId);
+    signatures.push(created.signature);
+  }
+
+  const added = await addOutcomes(
+    connection,
+    wallet,
+    election,
+    labels,
+    programId
+  );
+  if (added.signature) signatures.push(added.signature);
+
+  return {
+    signature: signatures[signatures.length - 1] ?? "",
+    signatures,
+    election,
+    electionConfig,
+    sbtMint,
+    candidateCount: labels.length,
+    reusedExisting,
+  };
 }
 
 export async function setElectionConfig(
@@ -159,7 +373,7 @@ export async function setElectionConfig(
   programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
 ) {
   const program = getBoatProgram(connection, wallet, programId);
-  const [electionConfig] = pdaElectionConfig(election);
+  const [electionConfig] = pdaElectionConfig(election, programId);
   const sig = await program.methods
     .setElectionConfig(
       new BN(params.defaultVoterWeight.toString()),
@@ -177,64 +391,6 @@ export async function setElectionConfig(
   return { signature: sig };
 }
 
-export async function setRegistrationPolicy(
-  connection: Connection,
-  wallet: AnchorWalletLike,
-  election: PublicKey,
-  params: {
-    registrationMode: number;
-    merkleRoot: Uint8Array; // 32
-    registrationEndTs: number;
-    maxRegisteredVoters: number;
-    registrationFeeLamports: bigint;
-  },
-  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
-) {
-  const program = getBoatProgram(connection, wallet, programId);
-  const [electionConfig] = pdaElectionConfig(election);
-  const rootArr = Array.from(params.merkleRoot);
-  if (rootArr.length !== 32) throw new Error("Merkle root must be 32 bytes.");
-  const sig = await program.methods
-    .setRegistrationPolicy(
-      params.registrationMode,
-      rootArr,
-      new BN(params.registrationEndTs),
-      params.maxRegisteredVoters,
-      new BN(params.registrationFeeLamports.toString())
-    )
-    .accounts({
-      authority: wallet.publicKey,
-      election,
-      electionConfig,
-    } as any)
-    .rpc();
-  return { signature: sig };
-}
-
-export async function delegateVote(
-  connection: Connection,
-  wallet: AnchorWalletLike,
-  election: PublicKey,
-  delegate: PublicKey,
-  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
-) {
-  const program = getBoatProgram(connection, wallet, programId);
-  const [electionConfig] = pdaElectionConfig(election);
-  const [voterRegistry] = pdaVoterRegistry(election, wallet.publicKey);
-  const [delegateRegistry] = pdaVoterRegistry(election, delegate);
-  const sig = await program.methods
-    .delegateVote()
-    .accounts({
-      voter: wallet.publicKey,
-      election,
-      electionConfig,
-      voterRegistry,
-      delegateRegistry,
-    } as any)
-    .rpc();
-  return { signature: sig };
-}
-
 export async function castVote(
   connection: Connection,
   wallet: AnchorWalletLike,
@@ -244,12 +400,11 @@ export async function castVote(
   programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
 ) {
   const program = getBoatProgram(connection, wallet, programId);
-  const [electionConfig] = pdaElectionConfig(election);
-  const [sbtMint] = pdaSbtMint(election);
-  const [voterRegistry] = pdaVoterRegistry(election, wallet.publicKey);
-  const [outcome] = pdaOutcome(election, outcomeIndex);
+  const [electionConfig] = pdaElectionConfig(election, programId);
+  const [sbtMint] = pdaSbtMint(election, programId);
+  const [voterRegistry] = pdaVoterRegistry(election, wallet.publicKey, programId);
+  const [outcome] = pdaOutcome(election, outcomeIndex, programId);
 
-  // Associated token account for token-2022: we still can derive it client-side
   const voterTokenAccount = await getAssociatedTokenAddress(
     sbtMint,
     wallet.publicKey,
@@ -258,13 +413,14 @@ export async function castVote(
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
-  const sig = await program.methods
+  const ix = await program.methods
     .castVote(outcomeIndex)
     .accounts({
       voter: wallet.publicKey,
       feeReceiver,
       election,
       electionConfig,
+      privateConfig: null,
       sbtMint,
       voterRegistry,
       voterTokenAccount,
@@ -272,58 +428,139 @@ export async function castVote(
       tokenProgram: TOKEN_2022_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     } as any)
-    .rpc();
+    .instruction();
+  const sig = await sendAndConfirmInstructions(connection, wallet, [ix]);
 
   return { signature: sig };
 }
 
-export async function registerVoterSponsored(
+export async function enablePrivateBallots(
   connection: Connection,
-  authorityWallet: AnchorWalletLike,
-  voterWallet: AnchorWalletLike,
+  wallet: AnchorWalletLike,
   election: PublicKey,
-  merkleProof: Uint8Array[], // each 32 bytes
+  eligibilityMerkleRoot: Uint8Array,
+  devMode: boolean = true,
   programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
 ) {
-  const program = getBoatProgram(connection, authorityWallet, programId);
-  const [electionConfig] = pdaElectionConfig(election);
-  const [sbtMint] = pdaSbtMint(election);
-  const [voterRegistry] = pdaVoterRegistry(election, voterWallet.publicKey);
-  const voterTokenAccount = await getAssociatedTokenAddress(
-    sbtMint,
-    voterWallet.publicKey,
-    false,
-    TOKEN_2022_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
-
-  const proof = merkleProof.map((p) => {
-    const a = Array.from(p);
-    if (a.length !== 32) throw new Error("Each merkle proof node must be 32 bytes.");
-    return a;
-  });
-
-  // This requires both authority + voter signers. Anchor supports extra signers via provider wallet only,
-  // so for mobile we will submit via a single combined transaction in the app (UI layer).
-  // Here we only build the instruction.
-  const ix = await program.methods
-    .registerVoterSponsored(proof)
+  const program = getBoatProgram(connection, wallet, programId);
+  const [privateConfig] = pdaPrivateConfig(election, programId);
+  const root = Array.from(eligibilityMerkleRoot);
+  const sig = await program.methods
+    .enablePrivateBallots(root, devMode)
     .accounts({
-      authority: authorityWallet.publicKey,
-      voter: voterWallet.publicKey,
+      authority: wallet.publicKey,
       election,
-      electionConfig,
-      sbtMint,
-      voterRegistry,
-      voterTokenAccount,
+      privateConfig,
       systemProgram: SystemProgram.programId,
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
     } as any)
-    .instruction();
-
-  return { instruction: ix, voterRegistry, voterTokenAccount };
+    .rpc();
+  return { signature: sig, privateConfig };
 }
+
+export async function setEligibilityRoot(
+  connection: Connection,
+  wallet: AnchorWalletLike,
+  election: PublicKey,
+  eligibilityMerkleRoot: Uint8Array,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const [privateConfig] = pdaPrivateConfig(election, programId);
+  const root = Array.from(eligibilityMerkleRoot);
+  const sig = await program.methods
+    .setEligibilityRoot(root)
+    .accounts({
+      authority: wallet.publicKey,
+      election,
+      privateConfig,
+    } as any)
+    .rpc();
+  return { signature: sig };
+}
+
+export async function castVoteZk(
+  connection: Connection,
+  wallet: AnchorWalletLike,
+  election: PublicKey,
+  args: {
+    outcomeIndex: number;
+    nullifier: Uint8Array;
+    proof: Uint8Array;
+    publicInputs: Uint8Array[];
+  },
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const [privateConfig] = pdaPrivateConfig(election, programId);
+  const [nullifierRecord] = pdaNullifier(election, args.nullifier, programId);
+  const [outcome] = pdaOutcome(election, args.outcomeIndex, programId);
+  const [privateTally] = pdaPrivateTally(election, args.outcomeIndex, programId);
+
+  const sig = await program.methods
+    .castVoteZk(
+      args.outcomeIndex,
+      Array.from(args.nullifier),
+      Buffer.from(args.proof),
+      args.publicInputs.map((pi) => Array.from(pi))
+    )
+    .accounts({
+      payer: wallet.publicKey,
+      election,
+      privateConfig,
+      nullifierRecord,
+      outcome,
+      privateTally,
+      systemProgram: SystemProgram.programId,
+    } as any)
+    .rpc();
+
+  return { signature: sig, nullifierRecord, privateTally };
+}
+
+export async function fetchPrivateConfig(
+  connection: Connection,
+  election: PublicKey,
+  wallet: AnchorWalletLike,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const [privateConfig] = pdaPrivateConfig(election, programId);
+  try {
+    const data = await (program.account as any).privateBallotConfig.fetch(
+      privateConfig
+    );
+    return { privateConfig, data };
+  } catch {
+    return { privateConfig, data: null };
+  }
+}
+
+export async function fetchPrivateTallies(
+  connection: Connection,
+  election: PublicKey,
+  outcomeCount: number,
+  wallet: AnchorWalletLike,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const out: { index: number; weight: bigint; pubkey: PublicKey }[] = [];
+  for (let i = 0; i < outcomeCount; i++) {
+    const [pubkey] = pdaPrivateTally(election, i, programId);
+    try {
+      const data = await (program.account as any).privateOutcomeTally.fetch(pubkey);
+      out.push({
+        index: Number(data.outcomeIndex ?? data.outcome_index ?? i),
+        weight: bnToBigInt(data.weight),
+        pubkey,
+      });
+    } catch {
+      out.push({ index: i, weight: 0n, pubkey });
+    }
+  }
+  return out;
+}
+
+const inflightRegisters = new Set<string>();
 
 export async function registerVoter(
   connection: Connection,
@@ -334,9 +571,9 @@ export async function registerVoter(
   programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
 ) {
   const program = getBoatProgram(connection, authorityWallet, programId);
-  const [electionConfig] = pdaElectionConfig(election);
-  const [sbtMint] = pdaSbtMint(election);
-  const [voterRegistry] = pdaVoterRegistry(election, voter);
+  const [electionConfig] = pdaElectionConfig(election, programId);
+  const [sbtMint] = pdaSbtMint(election, programId);
+  const [voterRegistry] = pdaVoterRegistry(election, voter, programId);
   const voterTokenAccount = await getAssociatedTokenAddress(
     sbtMint,
     voter,
@@ -344,76 +581,121 @@ export async function registerVoter(
     TOKEN_2022_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
+  const lockKey = `${election.toBase58()}:${voter.toBase58()}`;
+  if (inflightRegisters.has(lockKey)) {
+    return { signature: "", voterRegistry, voterTokenAccount, skipped: true };
+  }
+  inflightRegisters.add(lockKey);
+  try {
+    const already = await connection.getAccountInfo(voterRegistry, "confirmed");
+    if (already) {
+      return {
+        signature: "",
+        voterRegistry,
+        voterTokenAccount,
+        skipped: true,
+      };
+    }
 
-  const sig = await program.methods
-    .registerVoter(new BN(weight.toString()))
-    .accounts({
-      authority: authorityWallet.publicKey,
-      election,
-      electionConfig,
-      sbtMint,
-      voter,
-      voterRegistry,
-      voterTokenAccount,
-      systemProgram: SystemProgram.programId,
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-    } as any)
-    .rpc();
+    const ix = await program.methods
+      .registerVoter(new BN(weight.toString()))
+      .accounts({
+        authority: authorityWallet.publicKey,
+        election,
+        electionConfig,
+        sbtMint,
+        voter,
+        voterRegistry,
+        voterTokenAccount,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      } as any)
+      .instruction();
+    const sig = await sendAndConfirmInstructions(connection, authorityWallet, [ix], {
+      waitFor: [voterRegistry],
+    });
 
-  return { signature: sig, voterRegistry, voterTokenAccount };
+    return { signature: sig, voterRegistry, voterTokenAccount, skipped: false };
+  } finally {
+    inflightRegisters.delete(lockKey);
+  }
 }
 
-export async function selfRegisterVoter(
+export async function fetchElection(
   connection: Connection,
-  wallet: AnchorWalletLike,
   election: PublicKey,
-  merkleProof: Uint8Array[] = [],
+  wallet: AnchorWalletLike,
   programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
 ) {
   const program = getBoatProgram(connection, wallet, programId);
-  const [electionConfig] = pdaElectionConfig(election);
-  const [sbtMint] = pdaSbtMint(election);
-  const [voterRegistry] = pdaVoterRegistry(election, wallet.publicKey);
-  const voterTokenAccount = await getAssociatedTokenAddress(
-    sbtMint,
-    wallet.publicKey,
-    false,
-    TOKEN_2022_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
+  const data = await (program.account as any).election.fetch(election);
+  const [configPda] = pdaElectionConfig(election, programId);
+  const config = await (program.account as any).electionConfig.fetch(configPda);
+  return { election: data, config, configPda };
+}
 
-  const proof = merkleProof.map((p) => {
-    const a = Array.from(p);
-    if (a.length !== 32) throw new Error("Each merkle proof node must be 32 bytes.");
-    return a;
-  });
+export async function fetchOutcomes(
+  connection: Connection,
+  election: PublicKey,
+  outcomeCount: number,
+  wallet: AnchorWalletLike,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+) {
+  const program = getBoatProgram(connection, wallet, programId);
+  const out: { index: number; label: string; pubkey: PublicKey }[] = [];
+  for (let i = 0; i < outcomeCount; i++) {
+    const [pubkey] = pdaOutcome(election, i, programId);
+    try {
+      const data = await (program.account as any).electionOutcome.fetch(pubkey);
+      out.push({ index: data.index, label: data.label, pubkey });
+    } catch {
+      // Skip gaps (e.g. a later add_outcome was blocked by Phantom).
+    }
+  }
+  return out;
+}
 
-  const sig = await program.methods
-    .registerVoterSponsored(proof)
+/** Build unsigned initialize_election instruction (for API / wallet signing). */
+export async function buildInitializeElectionIx(
+  connection: Connection,
+  authority: PublicKey,
+  args: CreateElectionArgs,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+): Promise<{
+  transaction: Transaction;
+  election: PublicKey;
+  electionConfig: PublicKey;
+  sbtMint: PublicKey;
+}> {
+  const dummyWallet: AnchorWalletLike = {
+    publicKey: authority,
+    signTransaction: async (tx) => tx,
+    signAllTransactions: async (txs) => txs,
+  };
+  const program = getBoatProgram(connection, dummyWallet, programId);
+  const [election] = pdaElection(authority, args.title, programId);
+  const [electionConfig] = pdaElectionConfig(election, programId);
+  const [sbtMint] = pdaSbtMint(election, programId);
+  const ix = await program.methods
+    .initializeElection(args.title, new BN(args.startTime), new BN(args.endTime))
     .accounts({
-      authority: wallet.publicKey,
-      voter: wallet.publicKey,
+      authority,
       election,
       electionConfig,
       sbtMint,
-      voterRegistry,
-      voterTokenAccount,
       systemProgram: SystemProgram.programId,
       tokenProgram: TOKEN_2022_PROGRAM_ID,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      rent: SYSVAR_RENT_PUBKEY,
     } as any)
-    .rpc();
-
-  return { signature: sig, voterRegistry, voterTokenAccount };
+    .instruction();
+  const transaction = new Transaction().add(ix);
+  transaction.feePayer = authority;
+  const { blockhash } = await connection.getLatestBlockhash();
+  transaction.recentBlockhash = blockhash;
+  return { transaction, election, electionConfig, sbtMint };
 }
 
-// ---- Token program ids / helpers (token-2022) ----
-import {
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  getAssociatedTokenAddress,
-} from "@solana/spl-token";
-import { TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 export type VoterRegistryRow = {
   election: PublicKey;
   voter: PublicKey;
@@ -431,29 +713,39 @@ export async function fetchVoterRegistriesForElection(
   election: PublicKey
 ): Promise<VoterRegistryRow[]> {
   const coder = new BorshAccountsCoder(BOAT_IDL);
+  // Anchor account discriminators (from IDL) — required because ElectionConfig /
+  // ElectionOutcome also store `election` at offset 8.
+  const VOTER_REGISTRY_DISC = Buffer.from([146, 143, 24, 89, 70, 216, 173, 189]);
   const accounts = await connection.getProgramAccounts(programId, {
-    filters: [
-      // Anchor account discriminator is 8 bytes; election pubkey is first field in VoterRegistry
-      { memcmp: { offset: 8, bytes: election.toBase58() } },
-    ],
+    filters: [{ memcmp: { offset: 8, bytes: election.toBase58() } }],
   });
 
   const rows: VoterRegistryRow[] = [];
   for (const a of accounts) {
+    const raw = a.account.data as Buffer | Uint8Array;
+    const buf = Buffer.from(raw);
+    if (buf.length < 8 || !buf.subarray(0, 8).equals(VOTER_REGISTRY_DISC)) continue;
     try {
-      const decoded = coder.decode("VoterRegistry", a.account.data) as any;
+      let decoded: any;
+      try {
+        decoded = coder.decode("voterRegistry", buf);
+      } catch {
+        decoded = coder.decode("VoterRegistry", buf);
+      }
       rows.push({
         election: decoded.election as PublicKey,
         voter: decoded.voter as PublicKey,
         weight: bnToBigInt(decoded.weight),
-        isWhitelisted: Boolean(decoded.isWhitelisted),
-        hasVoted: Boolean(decoded.hasVoted),
-        currentVote: decoded.currentVote ?? null,
-        voteChangesUsed: Number(decoded.voteChangesUsed ?? 0),
-        delegatedTo: decoded.delegatedTo ?? null,
+        isWhitelisted: Boolean(decoded.isWhitelisted ?? decoded.is_whitelisted),
+        hasVoted: Boolean(decoded.hasVoted ?? decoded.has_voted),
+        currentVote: decoded.currentVote ?? decoded.current_vote ?? null,
+        voteChangesUsed: Number(
+          decoded.voteChangesUsed ?? decoded.vote_changes_used ?? 0
+        ),
+        delegatedTo: decoded.delegatedTo ?? decoded.delegated_to ?? null,
       });
     } catch {
-      // Ignore non-matching accounts in the program.
+      // ignore
     }
   }
   return rows;
@@ -512,7 +804,7 @@ export class NostrForumClient {
   }
 
   close() {
-    // no-op: our nostr helpers use one-shot connections
+    // no-op
   }
 }
 
@@ -524,3 +816,17 @@ function bnToBigInt(x: any): bigint {
   throw new Error("Unsupported bigint-like value");
 }
 
+export function explorerTxUrl(signature: string, cluster: "devnet" | "localnet" | "mainnet-beta" = "devnet") {
+  const clusterParam = cluster === "mainnet-beta" ? "" : `?cluster=${cluster}`;
+  return `https://explorer.solana.com/tx/${signature}${clusterParam}`;
+}
+
+export function explorerAddressUrl(
+  address: string,
+  cluster: "devnet" | "localnet" | "mainnet-beta" = "devnet"
+) {
+  const clusterParam = cluster === "mainnet-beta" ? "" : `?cluster=${cluster}`;
+  return `https://explorer.solana.com/address/${address}${clusterParam}`;
+}
+
+export type { TransactionInstruction };

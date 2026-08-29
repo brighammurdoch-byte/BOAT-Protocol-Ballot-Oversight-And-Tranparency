@@ -1,0 +1,9 @@
+# Build artifacts (regenerate with scripts/compile_circuit.sh + setup_groth16.sh)
+build/pot*.ptau
+build/*.zkey
+build/*.r1cs
+build/*.sym
+build/vote_js/
+build/sample_proof.json
+node_modules/
+dist/

@@ -1,0 +1,29 @@
+{
+  "name": "@boat/zk-circuits",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Groth16 / BN254 private-ballot circuit helpers for BOAT (Merkle + nullifier + outcome)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test src/*.test.ts",
+    "demo:prove": "tsx scripts/demo_prove.ts",
+    "compile": "./scripts/compile_circuit.sh",
+    "setup": "./scripts/setup_groth16.sh",
+    "export-vk": "tsx scripts/export_vk_rust.ts build/verification_key.json ../../programs/boat_final/src/verifying_key.rs",
+    "prove:snarkjs": "tsx scripts/prove_snarkjs.ts"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.7.1",
+    "circomlibjs": "^0.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "circomlib": "^2.0.5",
+    "snarkjs": "^0.7.6",
+    "tsx": "^4.23.12",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,56 @@
+# Deploy static BOAT web to GitHub Pages.
+name: Deploy BOAT web
+
+on:
+  push:
+    branches: [main, cursor/**]
+    paths:
+      - "app/boat-frontend/**"
+      - "packages/boat-sdk/**"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build SDK
+        working-directory: packages/boat-sdk
+        run: npm ci && npm run build
+      - name: Build web
+        working-directory: app/boat-frontend
+        env:
+          NEXT_PUBLIC_SOLANA_RPC: https://api.devnet.solana.com
+          BASE_PATH: /BOAT-Protocol-Ballot-Oversight-And-Tranparency
+        run: npm ci && npx next build --webpack
+      - name: Verify basePath in HTML
+        working-directory: app/boat-frontend
+        run: |
+          grep -q '/BOAT-Protocol-Ballot-Oversight-And-Tranparency/_next/' out/index.html
+          grep -q 'href="/BOAT-Protocol-Ballot-Oversight-And-Tranparency/admin/' out/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/boat-frontend/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

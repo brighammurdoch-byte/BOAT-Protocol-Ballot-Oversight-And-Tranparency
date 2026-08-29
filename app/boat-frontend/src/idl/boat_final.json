@@ -1,168 +1,1165 @@
 {
-  "version": "0.1.0",
-  "name": "boat_final",
-  "address": "5ZvG5oXKD6YKgWkAKWQMjdAb3vXEWzRNNGk3uRSt63gP",
+  "address": "DgVtAKNDKiTYUowPBsXfDnv7Seq5hE3NsP1oMDexCoid",
+  "metadata": {
+    "name": "boat_final",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "BOAT — Ballot Oversight And Transparency (USU campus election MVP)"
+  },
   "instructions": [
     {
-      "name": "initializeElection",
+      "name": "add_outcome",
+      "docs": [
+        "Add a candidate. Must finish before `start_time`."
+      ],
+      "discriminator": [
+        162,
+        222,
+        202,
+        185,
+        176,
+        222,
+        248,
+        52
+      ],
       "accounts": [
-        { "name": "authority", "isMut": true, "isSigner": true },
-        { "name": "election", "isMut": true, "isSigner": false },
-        { "name": "electionConfig", "isMut": true, "isSigner": false },
-        { "name": "sbtMint", "isMut": true, "isSigner": false },
-        { "name": "systemProgram", "isMut": false, "isSigner": false },
-        { "name": "tokenProgram", "isMut": false, "isSigner": false },
-        { "name": "rent", "isMut": false, "isSigner": false }
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "election"
+          ]
+        },
+        {
+          "name": "election",
+          "writable": true
+        },
+        {
+          "name": "outcome",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
       ],
       "args": [
-        { "name": "title", "type": "string" },
-        { "name": "startTime", "type": "i64" },
-        { "name": "endTime", "type": "i64" }
+        {
+          "name": "label",
+          "type": "string"
+        },
+        {
+          "name": "outcome_index",
+          "type": "u8"
+        }
       ]
     },
     {
-      "name": "setElectionConfig",
+      "name": "cast_vote",
+      "discriminator": [
+        20,
+        212,
+        15,
+        189,
+        69,
+        180,
+        69,
+        151
+      ],
       "accounts": [
-        { "name": "authority", "isMut": true, "isSigner": true },
-        { "name": "election", "isMut": false, "isSigner": false },
-        { "name": "electionConfig", "isMut": true, "isSigner": false }
+        {
+          "name": "voter",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "voter_registry"
+          ]
+        },
+        {
+          "name": "fee_receiver",
+          "writable": true
+        },
+        {
+          "name": "election",
+          "relations": [
+            "election_config",
+            "voter_registry"
+          ]
+        },
+        {
+          "name": "election_config"
+        },
+        {
+          "name": "private_config",
+          "docs": [
+            "Optional: when present and enabled, transparent cast_vote is rejected."
+          ],
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  118,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sbt_mint"
+        },
+        {
+          "name": "voter_registry",
+          "writable": true
+        },
+        {
+          "name": "voter_token_account",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "voter"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "sbt_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "outcome"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
       ],
       "args": [
-        { "name": "defaultVoterWeight", "type": "u64" },
-        { "name": "quorumPercentage", "type": "u8" },
-        { "name": "maxFreeVoteChanges", "type": "u8" },
-        { "name": "pricePerVoteChange", "type": "u64" },
-        { "name": "allowDelegation", "type": "bool" }
+        {
+          "name": "outcome_index",
+          "type": "u8"
+        }
       ]
     },
     {
-      "name": "setRegistrationPolicy",
+      "name": "cast_vote_zk",
+      "docs": [
+        "Cast a private ballot: verify Groth16-shaped proof, store nullifier, bump aggregate tally.",
+        "Does not write `VoterRegistry.current_vote` (no per-wallet choice on-chain)."
+      ],
+      "discriminator": [
+        59,
+        246,
+        59,
+        53,
+        12,
+        138,
+        98,
+        36
+      ],
       "accounts": [
-        { "name": "authority", "isMut": true, "isSigner": true },
-        { "name": "election", "isMut": true, "isSigner": false },
-        { "name": "electionConfig", "isMut": true, "isSigner": false }
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "election",
+          "relations": [
+            "private_config"
+          ]
+        },
+        {
+          "name": "private_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  118,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              }
+            ]
+          }
+        },
+        {
+          "name": "nullifier_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  117,
+                  108,
+                  108,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              },
+              {
+                "kind": "arg",
+                "path": "nullifier"
+              }
+            ]
+          }
+        },
+        {
+          "name": "outcome"
+        },
+        {
+          "name": "private_tally",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
       ],
       "args": [
-        { "name": "registrationMode", "type": "u8" },
-        { "name": "merkleRoot", "type": { "array": ["u8", 32] } },
-        { "name": "registrationEndTs", "type": "i64" },
-        { "name": "maxRegisteredVoters", "type": "u32" },
-        { "name": "registrationFeeLamports", "type": "u64" }
+        {
+          "name": "outcome_index",
+          "type": "u8"
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "public_inputs",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        }
       ]
     },
     {
-      "name": "enableTokenVoting",
-      "accounts": [
-        { "name": "authority", "isMut": true, "isSigner": true },
-        { "name": "election", "isMut": false, "isSigner": false },
-        { "name": "electionConfig", "isMut": true, "isSigner": false },
-        { "name": "tokenMint", "isMut": false, "isSigner": false },
-        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      "name": "delegate_vote",
+      "docs": [
+        "Optional: mark that the voter delegated (blocks direct cast). Weight is NOT transferred."
       ],
-      "args": [{ "name": "minTokenBalance", "type": "u64" }]
-    },
-    {
-      "name": "registerVoter",
-      "accounts": [
-        { "name": "authority", "isMut": true, "isSigner": true },
-        { "name": "election", "isMut": true, "isSigner": false },
-        { "name": "electionConfig", "isMut": false, "isSigner": false },
-        { "name": "sbtMint", "isMut": true, "isSigner": false },
-        { "name": "voter", "isMut": true, "isSigner": false },
-        { "name": "voterRegistry", "isMut": true, "isSigner": false },
-        { "name": "voterTokenAccount", "isMut": true, "isSigner": false },
-        { "name": "systemProgram", "isMut": false, "isSigner": false },
-        { "name": "tokenProgram", "isMut": false, "isSigner": false },
-        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false }
+      "discriminator": [
+        12,
+        116,
+        204,
+        68,
+        87,
+        205,
+        40,
+        205
       ],
-      "args": [{ "name": "weight", "type": "u64" }]
-    },
-    {
-      "name": "registerVoterSponsored",
       "accounts": [
-        { "name": "authority", "isMut": true, "isSigner": true },
-        { "name": "voter", "isMut": true, "isSigner": true },
-        { "name": "election", "isMut": true, "isSigner": false },
-        { "name": "electionConfig", "isMut": false, "isSigner": false },
-        { "name": "sbtMint", "isMut": true, "isSigner": false },
-        { "name": "voterRegistry", "isMut": true, "isSigner": false },
-        { "name": "voterTokenAccount", "isMut": true, "isSigner": false },
-        { "name": "systemProgram", "isMut": false, "isSigner": false },
-        { "name": "tokenProgram", "isMut": false, "isSigner": false },
-        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false }
-      ],
-      "args": [{ "name": "merkleProof", "type": { "vec": { "array": ["u8", 32] } } }]
-    },
-    {
-      "name": "addOutcome",
-      "accounts": [
-        { "name": "authority", "isMut": true, "isSigner": true },
-        { "name": "election", "isMut": true, "isSigner": false },
-        { "name": "outcome", "isMut": true, "isSigner": false },
-        { "name": "systemProgram", "isMut": false, "isSigner": false }
-      ],
-      "args": [
-        { "name": "label", "type": "string" },
-        { "name": "outcomeIndex", "type": "u8" }
-      ]
-    },
-    {
-      "name": "delegateVote",
-      "accounts": [
-        { "name": "voter", "isMut": true, "isSigner": true },
-        { "name": "election", "isMut": false, "isSigner": false },
-        { "name": "electionConfig", "isMut": false, "isSigner": false },
-        { "name": "voterRegistry", "isMut": true, "isSigner": false },
-        { "name": "delegateRegistry", "isMut": false, "isSigner": false }
+        {
+          "name": "voter",
+          "signer": true,
+          "relations": [
+            "voter_registry"
+          ]
+        },
+        {
+          "name": "election",
+          "relations": [
+            "election_config",
+            "voter_registry",
+            "delegate_registry"
+          ]
+        },
+        {
+          "name": "election_config"
+        },
+        {
+          "name": "voter_registry",
+          "writable": true
+        },
+        {
+          "name": "delegate_registry"
+        }
       ],
       "args": []
     },
     {
-      "name": "castVote",
-      "accounts": [
-        { "name": "voter", "isMut": true, "isSigner": true },
-        { "name": "feeReceiver", "isMut": true, "isSigner": false },
-        { "name": "election", "isMut": true, "isSigner": false },
-        { "name": "electionConfig", "isMut": false, "isSigner": false },
-        { "name": "sbtMint", "isMut": true, "isSigner": false },
-        { "name": "voterRegistry", "isMut": true, "isSigner": false },
-        { "name": "voterTokenAccount", "isMut": true, "isSigner": false },
-        { "name": "outcome", "isMut": false, "isSigner": false },
-        { "name": "tokenProgram", "isMut": false, "isSigner": false },
-        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      "name": "enable_private_ballots",
+      "docs": [
+        "Enable private ballots before voting starts. Commits the eligibility Merkle root.",
+        "`dev_mode=true` accepts the deterministic binder proof from `@boat/zk-circuits`",
+        "(not secure — trials / CI only). Production must set `dev_mode=false` and ship a VK."
       ],
-      "args": [{ "name": "outcomeIndex", "type": "u8" }]
+      "discriminator": [
+        145,
+        87,
+        63,
+        97,
+        111,
+        94,
+        143,
+        123
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "election"
+          ]
+        },
+        {
+          "name": "election"
+        },
+        {
+          "name": "private_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  118,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "eligibility_merkle_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "dev_mode",
+          "type": "bool"
+        }
+      ]
     },
     {
-      "name": "castVoteWithToken",
-      "accounts": [
-        { "name": "voter", "isMut": true, "isSigner": true },
-        { "name": "election", "isMut": false, "isSigner": false },
-        { "name": "electionConfig", "isMut": false, "isSigner": false },
-        { "name": "voterTokenAccount", "isMut": false, "isSigner": false },
-        { "name": "tokenMint", "isMut": false, "isSigner": false },
-        { "name": "tokenProgram", "isMut": false, "isSigner": false },
-        { "name": "outcome", "isMut": false, "isSigner": false }
+      "name": "initialize_election",
+      "discriminator": [
+        59,
+        166,
+        191,
+        126,
+        195,
+        0,
+        153,
+        168
       ],
-      "args": [{ "name": "outcomeIndex", "type": "u8" }]
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "election",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  108,
+                  101,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "arg",
+                "path": "title"
+              }
+            ]
+          }
+        },
+        {
+          "name": "election_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sbt_mint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "title",
+          "type": "string"
+        },
+        {
+          "name": "start_time",
+          "type": "i64"
+        },
+        {
+          "name": "end_time",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "register_voter",
+      "docs": [
+        "Authority registers a voter and mints SBT weight tokens."
+      ],
+      "discriminator": [
+        229,
+        124,
+        185,
+        99,
+        118,
+        51,
+        226,
+        6
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "election"
+          ]
+        },
+        {
+          "name": "election",
+          "writable": true,
+          "relations": [
+            "election_config"
+          ]
+        },
+        {
+          "name": "election_config"
+        },
+        {
+          "name": "sbt_mint",
+          "writable": true,
+          "relations": [
+            "election"
+          ]
+        },
+        {
+          "name": "voter"
+        },
+        {
+          "name": "voter_registry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  111,
+                  116,
+                  101,
+                  114,
+                  95,
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              },
+              {
+                "kind": "account",
+                "path": "voter"
+              }
+            ]
+          }
+        },
+        {
+          "name": "voter_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "voter"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "sbt_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        }
+      ],
+      "args": [
+        {
+          "name": "weight",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_election_config",
+      "docs": [
+        "Update election config. Frozen once voting has started."
+      ],
+      "discriminator": [
+        106,
+        20,
+        197,
+        184,
+        92,
+        161,
+        94,
+        104
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "election"
+          ]
+        },
+        {
+          "name": "election",
+          "relations": [
+            "election_config"
+          ]
+        },
+        {
+          "name": "election_config",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "default_voter_weight",
+          "type": "u64"
+        },
+        {
+          "name": "quorum_percentage",
+          "type": "u8"
+        },
+        {
+          "name": "max_free_vote_changes",
+          "type": "u8"
+        },
+        {
+          "name": "price_per_vote_change",
+          "type": "u64"
+        },
+        {
+          "name": "allow_delegation",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_eligibility_root",
+      "docs": [
+        "Update eligibility Merkle root before voting starts (e.g. after late registration)."
+      ],
+      "discriminator": [
+        19,
+        109,
+        114,
+        36,
+        207,
+        203,
+        137,
+        33
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "election"
+          ]
+        },
+        {
+          "name": "election",
+          "relations": [
+            "private_config"
+          ]
+        },
+        {
+          "name": "private_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  118,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "eligibility_merkle_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
     }
   ],
   "accounts": [
     {
       "name": "Election",
+      "discriminator": [
+        68,
+        191,
+        164,
+        85,
+        35,
+        105,
+        152,
+        202
+      ]
+    },
+    {
+      "name": "ElectionConfig",
+      "discriminator": [
+        31,
+        60,
+        24,
+        171,
+        31,
+        205,
+        153,
+        64
+      ]
+    },
+    {
+      "name": "ElectionOutcome",
+      "discriminator": [
+        110,
+        38,
+        210,
+        15,
+        76,
+        172,
+        3,
+        122
+      ]
+    },
+    {
+      "name": "NullifierRecord",
+      "discriminator": [
+        56,
+        18,
+        57,
+        175,
+        69,
+        202,
+        189,
+        70
+      ]
+    },
+    {
+      "name": "PrivateBallotConfig",
+      "discriminator": [
+        154,
+        11,
+        86,
+        26,
+        255,
+        5,
+        182,
+        108
+      ]
+    },
+    {
+      "name": "PrivateOutcomeTally",
+      "discriminator": [
+        92,
+        95,
+        173,
+        56,
+        54,
+        215,
+        36,
+        191
+      ]
+    },
+    {
+      "name": "VoterRegistry",
+      "discriminator": [
+        146,
+        143,
+        24,
+        89,
+        70,
+        216,
+        173,
+        189
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "OutcomeAdded",
+      "discriminator": [
+        127,
+        92,
+        233,
+        41,
+        190,
+        43,
+        100,
+        51
+      ]
+    },
+    {
+      "name": "PrivateVoteCast",
+      "discriminator": [
+        0,
+        54,
+        255,
+        206,
+        96,
+        179,
+        161,
+        229
+      ]
+    },
+    {
+      "name": "VoteCast",
+      "discriminator": [
+        39,
+        53,
+        195,
+        104,
+        188,
+        17,
+        225,
+        213
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "ElectionNotStarted",
+      "msg": "Election has not started yet."
+    },
+    {
+      "code": 6001,
+      "name": "ElectionEnded",
+      "msg": "Election is already over."
+    },
+    {
+      "code": 6002,
+      "name": "NoVotingPower",
+      "msg": "You have no voting tokens remaining."
+    },
+    {
+      "code": 6003,
+      "name": "InvalidQuorumPercentage",
+      "msg": "Invalid quorum percentage (must be 1-100)."
+    },
+    {
+      "code": 6004,
+      "name": "NotWhitelisted",
+      "msg": "Voter is not whitelisted."
+    },
+    {
+      "code": 6005,
+      "name": "AlreadyVoted",
+      "msg": "Voter has already cast a vote."
+    },
+    {
+      "code": 6006,
+      "name": "CannotVoteIfDelegated",
+      "msg": "Voter has delegated their vote and cannot vote directly."
+    },
+    {
+      "code": 6007,
+      "name": "DelegationNotAllowed",
+      "msg": "Delegation is not allowed for this election."
+    },
+    {
+      "code": 6008,
+      "name": "DelegateNotWhitelisted",
+      "msg": "Delegate is not whitelisted."
+    },
+    {
+      "code": 6009,
+      "name": "WeightMismatch",
+      "msg": "Voting weight does not match registry."
+    },
+    {
+      "code": 6010,
+      "name": "MaxVotersReached",
+      "msg": "Max registered voters reached."
+    },
+    {
+      "code": 6011,
+      "name": "InvalidOutcome",
+      "msg": "Invalid outcome."
+    },
+    {
+      "code": 6012,
+      "name": "NoOutcomesDefined",
+      "msg": "No outcomes defined for this election."
+    },
+    {
+      "code": 6013,
+      "name": "ElectionAlreadyStarted",
+      "msg": "Voting has already started."
+    },
+    {
+      "code": 6014,
+      "name": "LabelTooLong",
+      "msg": "Outcome label too long or empty."
+    },
+    {
+      "code": 6015,
+      "name": "InvalidOutcomeIndex",
+      "msg": "Invalid outcome index."
+    },
+    {
+      "code": 6016,
+      "name": "TooManyOutcomes",
+      "msg": "Too many outcomes."
+    },
+    {
+      "code": 6017,
+      "name": "InvalidTitle",
+      "msg": "Invalid election title."
+    },
+    {
+      "code": 6018,
+      "name": "InvalidElectionWindow",
+      "msg": "Invalid election time window."
+    },
+    {
+      "code": 6019,
+      "name": "InvalidMint",
+      "msg": "Invalid SBT mint for this election."
+    },
+    {
+      "code": 6020,
+      "name": "UsePrivateBallot",
+      "msg": "This election requires cast_vote_zk (private ballots)."
+    },
+    {
+      "code": 6021,
+      "name": "PrivateBallotsNotEnabled",
+      "msg": "Private ballots are not enabled for this election."
+    },
+    {
+      "code": 6022,
+      "name": "InvalidZkProof",
+      "msg": "Invalid ZK proof bytes."
+    },
+    {
+      "code": 6023,
+      "name": "InvalidZkPublicInputs",
+      "msg": "Invalid ZK public inputs."
+    },
+    {
+      "code": 6024,
+      "name": "MerkleRootMismatch",
+      "msg": "Merkle root does not match election commitment."
+    },
+    {
+      "code": 6025,
+      "name": "NullifierMismatch",
+      "msg": "Nullifier does not match public inputs."
+    },
+    {
+      "code": 6026,
+      "name": "ElectionIdMismatch",
+      "msg": "Election id in public inputs does not match."
+    },
+    {
+      "code": 6027,
+      "name": "ZkVerifierNotConfigured",
+      "msg": "Production Groth16 verifier is not configured (ceremony VK missing)."
+    }
+  ],
+  "types": [
+    {
+      "name": "Election",
       "type": {
         "kind": "struct",
         "fields": [
-          { "name": "authority", "type": "publicKey" },
-          { "name": "title", "type": "string" },
-          { "name": "startTime", "type": "i64" },
-          { "name": "endTime", "type": "i64" },
-          { "name": "sbtMint", "type": "publicKey" },
-          { "name": "bump", "type": "u8" },
-          { "name": "totalWeight", "type": "u64" },
-          { "name": "denomFactor", "type": "u64" },
-          { "name": "registeredVoterCount", "type": "u32" },
-          { "name": "outcomeCount", "type": "u8" }
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "title",
+            "type": "string"
+          },
+          {
+            "name": "start_time",
+            "type": "i64"
+          },
+          {
+            "name": "end_time",
+            "type": "i64"
+          },
+          {
+            "name": "sbt_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "total_weight",
+            "type": "u64"
+          },
+          {
+            "name": "denom_factor",
+            "type": "u64"
+          },
+          {
+            "name": "registered_voter_count",
+            "type": "u32"
+          },
+          {
+            "name": "outcome_count",
+            "type": "u8"
+          }
         ]
       }
     },
@@ -171,20 +1168,38 @@
       "type": {
         "kind": "struct",
         "fields": [
-          { "name": "election", "type": "publicKey" },
-          { "name": "defaultVoterWeight", "type": "u64" },
-          { "name": "quorumPercentage", "type": "u8" },
-          { "name": "maxFreeVoteChanges", "type": "u8" },
-          { "name": "pricePerVoteChange", "type": "u64" },
-          { "name": "allowDelegation", "type": "bool" },
-          { "name": "allowTokenVoting", "type": "bool" },
-          { "name": "tokenMint", "type": { "option": "publicKey" } },
-          { "name": "minTokenBalance", "type": "u64" },
-          { "name": "registrationMode", "type": "u8" },
-          { "name": "merkleRoot", "type": { "array": ["u8", 32] } },
-          { "name": "registrationEndTs", "type": "i64" },
-          { "name": "maxRegisteredVoters", "type": "u32" },
-          { "name": "registrationFeeLamports", "type": "u64" }
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "default_voter_weight",
+            "type": "u64"
+          },
+          {
+            "name": "quorum_percentage",
+            "type": "u8"
+          },
+          {
+            "name": "max_free_vote_changes",
+            "type": "u8"
+          },
+          {
+            "name": "price_per_vote_change",
+            "type": "u64"
+          },
+          {
+            "name": "allow_delegation",
+            "type": "bool"
+          },
+          {
+            "name": "registration_mode",
+            "type": "u8"
+          },
+          {
+            "name": "max_registered_voters",
+            "type": "u32"
+          }
         ]
       }
     },
@@ -193,10 +1208,198 @@
       "type": {
         "kind": "struct",
         "fields": [
-          { "name": "election", "type": "publicKey" },
-          { "name": "index", "type": "u8" },
-          { "name": "label", "type": "string" },
-          { "name": "bump", "type": "u8" }
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u8"
+          },
+          {
+            "name": "label",
+            "type": "string"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NullifierRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "nullifier",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OutcomeAdded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u8"
+          },
+          {
+            "name": "label",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PrivateBallotConfig",
+      "docs": [
+        "Optional private-ballot config (separate PDA so transparent elections stay unchanged)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "enabled",
+            "type": "bool"
+          },
+          {
+            "name": "dev_mode",
+            "docs": [
+              "Accepts `@boat/zk-circuits` binder proofs — NOT for campus production."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "eligibility_merkle_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "private_vote_count",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PrivateOutcomeTally",
+      "docs": [
+        "Aggregate counter per outcome in private mode (no per-wallet choice)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "outcome_index",
+            "type": "u8"
+          },
+          {
+            "name": "weight",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PrivateVoteCast",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "nullifier",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "outcome_index",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VoteCast",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "voter",
+            "type": "pubkey"
+          },
+          {
+            "name": "candidate",
+            "type": "string"
+          },
+          {
+            "name": "weight",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "vote_change_number",
+            "type": "u8"
+          }
         ]
       }
     },
@@ -205,65 +1408,48 @@
       "type": {
         "kind": "struct",
         "fields": [
-          { "name": "election", "type": "publicKey" },
-          { "name": "voter", "type": "publicKey" },
-          { "name": "weight", "type": "u64" },
-          { "name": "isWhitelisted", "type": "bool" },
-          { "name": "hasVoted", "type": "bool" },
-          { "name": "currentVote", "type": { "option": "string" } },
-          { "name": "voteChangesUsed", "type": "u8" },
-          { "name": "delegatedTo", "type": { "option": "publicKey" } },
-          { "name": "bump", "type": "u8" }
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "voter",
+            "type": "pubkey"
+          },
+          {
+            "name": "weight",
+            "type": "u64"
+          },
+          {
+            "name": "is_whitelisted",
+            "type": "bool"
+          },
+          {
+            "name": "has_voted",
+            "type": "bool"
+          },
+          {
+            "name": "current_vote",
+            "type": {
+              "option": "string"
+            }
+          },
+          {
+            "name": "vote_changes_used",
+            "type": "u8"
+          },
+          {
+            "name": "delegated_to",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
         ]
       }
     }
-  ],
-  "events": [
-    {
-      "name": "VoteCast",
-      "fields": [
-        { "name": "election", "type": "publicKey", "index": false },
-        { "name": "voter", "type": "publicKey", "index": false },
-        { "name": "candidate", "type": "string", "index": false },
-        { "name": "weight", "type": "u64", "index": false },
-        { "name": "timestamp", "type": "i64", "index": false },
-        { "name": "voteChangeNumber", "type": "u8", "index": false }
-      ]
-    },
-    {
-      "name": "OutcomeAdded",
-      "fields": [
-        { "name": "election", "type": "publicKey", "index": false },
-        { "name": "index", "type": "u8", "index": false },
-        { "name": "label", "type": "string", "index": false }
-      ]
-    }
-  ],
-  "errors": [
-    { "code": 6000, "name": "ElectionNotStarted", "msg": "Election has not started yet." },
-    { "code": 6001, "name": "ElectionEnded", "msg": "Election is already over." },
-    { "code": 6002, "name": "NoVotingPower", "msg": "You have no voting tokens remaining." },
-    { "code": 6003, "name": "InvalidQuorumPercentage", "msg": "Invalid quorum percentage (must be 1-100)." },
-    { "code": 6004, "name": "NotWhitelisted", "msg": "Voter is not whitelisted." },
-    { "code": 6005, "name": "AlreadyVoted", "msg": "Voter has already cast a vote." },
-    { "code": 6006, "name": "CannotVoteIfDelegated", "msg": "Voter has delegated their vote and cannot vote directly." },
-    { "code": 6007, "name": "DelegationNotAllowed", "msg": "Delegation is not allowed for this election." },
-    { "code": 6008, "name": "DelegateNotWhitelisted", "msg": "Delegate is not whitelisted." },
-    { "code": 6009, "name": "WeightMismatch", "msg": "Voting weight does not match registry." },
-    { "code": 6010, "name": "TokenVotingNotEnabled", "msg": "Token-based voting is not enabled for this election." },
-    { "code": 6011, "name": "InsufficientTokenBalance", "msg": "Voter does not have sufficient token balance." },
-    { "code": 6012, "name": "SelfRegistrationNotAllowed", "msg": "Self-registration is not enabled for this election." },
-    { "code": 6013, "name": "RegistrationClosed", "msg": "Registration is closed." },
-    { "code": 6014, "name": "MerkleProofInvalid", "msg": "Merkle proof invalid." },
-    { "code": 6015, "name": "MaxVotersReached", "msg": "Max registered voters reached." },
-    { "code": 6016, "name": "InvalidOutcome", "msg": "Invalid outcome." },
-    { "code": 6017, "name": "NoOutcomesDefined", "msg": "No outcomes defined for this election." },
-    { "code": 6018, "name": "ElectionAlreadyStarted", "msg": "Voting has already started." },
-    { "code": 6019, "name": "LabelTooLong", "msg": "Outcome label too long." },
-    { "code": 6020, "name": "InvalidOutcomeIndex", "msg": "Invalid outcome index." },
-    { "code": 6021, "name": "TooManyOutcomes", "msg": "Too many outcomes." },
-    { "code": 6022, "name": "InvalidRegistrationMode", "msg": "Invalid registration mode." },
-    { "code": 6023, "name": "InvalidMerkleRoot", "msg": "Invalid merkle root." }
-  ],
-  "metadata": { "address": "5ZvG5oXKD6YKgWkAKWQMjdAb3vXEWzRNNGk3uRSt63gP" }
+  ]
 }
