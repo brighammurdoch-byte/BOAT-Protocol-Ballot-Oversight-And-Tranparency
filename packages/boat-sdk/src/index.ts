@@ -57,8 +57,12 @@ export {
   totalsWithAllCandidates,
 } from "./helpers";
 export {
+  asVersionedForSimulation,
+  assertMessageHeader,
+  buildLegacyTransaction,
   formatSimulationError,
   sendAndConfirmInstructions,
+  simulateDispatchKind,
   waitForAccount,
 } from "./tx";
 
