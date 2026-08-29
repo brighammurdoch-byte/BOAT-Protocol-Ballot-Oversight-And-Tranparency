@@ -4,6 +4,7 @@ import {
   type TransactionInstruction,
   PublicKey,
   Transaction,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import type { AnchorWalletLike } from "./wallet";
 
@@ -55,6 +56,87 @@ export async function waitForAccount(
   );
 }
 
+/**
+ * Build a legacy Transaction the way Phantom / wallet-adapter expect:
+ * feePayer + recentBlockhash as instance fields, not the
+ * `{ blockhash, lastValidBlockHeight }` ctor (Object.assign can add
+ * surprising own-properties that trip versioned-tx detection).
+ */
+export function buildLegacyTransaction(
+  feePayer: PublicKey,
+  ixs: TransactionInstruction[],
+  blockhash: string,
+  lastValidBlockHeight: number
+): Transaction {
+  const tx = new Transaction();
+  tx.feePayer = feePayer;
+  tx.recentBlockhash = blockhash;
+  tx.lastValidBlockHeight = lastValidBlockHeight;
+  tx.add(...ixs);
+  return tx;
+}
+
+/**
+ * web3.js Connection.simulateTransaction dispatches like this:
+ *
+ *   if ('message' in tx)        → VersionedTransaction.serialize()
+ *   else if (tx instanceof Transaction) → legacy path
+ *   else                        → Transaction.populate(tx as Message)
+ *                                 which reads message.header.numRequiredSignatures
+ *
+ * A legacy Transaction from a *different* @solana/web3.js copy (Next.js +
+ * wallet-adapter + file: SDK routinely ship two) fails `instanceof` and is
+ * treated as a Message. Message.header is undefined → the Create Election
+ * TypeError, with zero Phantom prompts.
+ *
+ * VersionedTransaction always has `.message`, so the first branch runs and
+ * calls serialize() on *this* object (duck typing — no instanceof).
+ */
+export function asVersionedForSimulation(tx: Transaction): VersionedTransaction {
+  if (!tx.feePayer) {
+    throw new Error("Transaction feePayer is required before simulation.");
+  }
+  if (!tx.recentBlockhash) {
+    throw new Error("Transaction recentBlockhash is required before simulation.");
+  }
+  return new VersionedTransaction(tx.compileMessage());
+}
+
+/**
+ * Same dispatch Connection.simulateTransaction uses (1.98.x). Exposed so
+ * tests can prove a foreign legacy tx throws numRequiredSignatures and a
+ * VersionedTransaction does not.
+ */
+export function simulateDispatchKind(
+  transactionOrMessage: object
+): "versioned" | "legacy-instanceof" | "message-populate" {
+  if ("message" in transactionOrMessage) {
+    return "versioned";
+  }
+  if (transactionOrMessage instanceof Transaction) {
+    return "legacy-instanceof";
+  }
+  return "message-populate";
+}
+
+export function assertMessageHeader(transactionOrMessage: object): number {
+  if (simulateDispatchKind(transactionOrMessage) === "message-populate") {
+    const header = (transactionOrMessage as { header?: { numRequiredSignatures?: number } })
+      .header;
+    if (header == null || typeof header.numRequiredSignatures !== "number") {
+      throw new TypeError(
+        "Cannot read properties of undefined (reading 'numRequiredSignatures')"
+      );
+    }
+    return header.numRequiredSignatures;
+  }
+  if (simulateDispatchKind(transactionOrMessage) === "versioned") {
+    const message = (transactionOrMessage as VersionedTransaction).message;
+    return message.header.numRequiredSignatures;
+  }
+  return 1;
+}
+
 async function latestTx(
   connection: Connection,
   wallet: AnchorWalletLike,
@@ -63,13 +145,12 @@ async function latestTx(
 ): Promise<Transaction> {
   const { blockhash, lastValidBlockHeight } =
     await connection.getLatestBlockhash(commitment);
-  const tx = new Transaction({
-    feePayer: wallet.publicKey,
+  return buildLegacyTransaction(
+    wallet.publicKey,
+    ixs,
     blockhash,
-    lastValidBlockHeight,
-  });
-  tx.add(...ixs);
-  return tx;
+    lastValidBlockHeight
+  );
 }
 
 /** Simulate on our RPC before Phantom ever sees the tx. */
@@ -80,7 +161,11 @@ export async function simulateInstructions(
   commitment: Commitment = "confirmed"
 ): Promise<Transaction> {
   const tx = await latestTx(connection, wallet, ixs, commitment);
-  const sim = await connection.simulateTransaction(tx);
+  const sim = await connection.simulateTransaction(asVersionedForSimulation(tx), {
+    commitment,
+    sigVerify: false,
+    replaceRecentBlockhash: true,
+  });
   if (sim.value.err) {
     throw new Error(formatSimulationError(sim.value.err, sim.value.logs));
   }
@@ -136,7 +221,16 @@ export async function sendAndConfirmInstructions(
   const blockhash = tx.recentBlockhash!;
   const lastValidBlockHeight = tx.lastValidBlockHeight!;
   const signed = await wallet.signTransaction(tx);
-  const sig = await connection.sendRawTransaction(signed.serialize(), {
+  if (!signed) {
+    throw new Error("Wallet returned an empty signed transaction.");
+  }
+  const raw =
+    typeof signed.serialize === "function"
+      ? signed.serialize()
+      : (() => {
+          throw new Error("Wallet did not return a serializable transaction.");
+        })();
+  const sig = await connection.sendRawTransaction(raw, {
     skipPreflight: true,
     maxRetries: 5,
   });

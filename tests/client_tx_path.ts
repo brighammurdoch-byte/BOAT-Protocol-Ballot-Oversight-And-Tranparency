@@ -1,14 +1,24 @@
 import assert from "node:assert/strict";
-import { Keypair, PublicKey } from "@solana/web3.js";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from "@solana/web3.js";
 import {
   CANDIDATE_SETUP_LEAD_SEC,
   DEFAULT_BOAT_PROGRAM_ID,
+  asVersionedForSimulation,
+  assertMessageHeader,
+  buildLegacyTransaction,
   computeElectionWindow,
   formatSimulationError,
   parseCandidateLabels,
   parseVoterKeys,
   pdaOutcome,
   remainingCandidateLabels,
+  simulateDispatchKind,
   totalsWithAllCandidates,
 } from "../packages/boat-sdk/src/index";
 
@@ -101,6 +111,84 @@ function testTallyIncludesZeroVoteCandidates() {
   assert.equal(byLabel.Carol, 0n);
 }
 
+function sampleLegacyTx(): Transaction {
+  const payer = Keypair.generate();
+  return buildLegacyTransaction(
+    payer.publicKey,
+    [
+      SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: payer.publicKey,
+        lamports: 1,
+      }),
+    ],
+    "11111111111111111111111111111111",
+    1
+  );
+}
+
+/**
+ * Reproduce the live Create Election TypeError: Connection.simulateTransaction
+ * treats a non-instanceof Transaction as a Message and reads
+ * message.header.numRequiredSignatures.
+ */
+function testForeignLegacyTxHitsNumRequiredSignatures() {
+  const tx = sampleLegacyTx();
+  assert.equal(simulateDispatchKind(tx), "legacy-instanceof");
+  assert.ok(!("message" in tx), "legacy tx must not look versioned");
+  assert.ok(!("version" in tx), "legacy tx must not trip wallet-adapter version check");
+
+  const foreign = {
+    feePayer: tx.feePayer,
+    instructions: tx.instructions,
+    signatures: tx.signatures,
+    recentBlockhash: tx.recentBlockhash,
+    lastValidBlockHeight: tx.lastValidBlockHeight,
+  };
+  assert.equal(simulateDispatchKind(foreign), "message-populate");
+  assert.throws(
+    () => assertMessageHeader(foreign),
+    (err: unknown) =>
+      err instanceof TypeError &&
+      /numRequiredSignatures/.test((err as Error).message)
+  );
+}
+
+function testVersionedSimulationBypassesInstanceof() {
+  const tx = sampleLegacyTx();
+  const versioned = asVersionedForSimulation(tx);
+  assert.equal(simulateDispatchKind(versioned), "versioned");
+  assert.ok(versioned.message.header.numRequiredSignatures >= 1);
+  assert.equal(
+    assertMessageHeader(versioned),
+    versioned.message.header.numRequiredSignatures
+  );
+  // serialize() is what Connection.simulateTransaction calls on this branch —
+  // it must not throw the populate TypeError.
+  const wire = versioned.serialize();
+  assert.ok(wire.byteLength > 0);
+}
+
+/** Hit the real web3.js method — populate throws before any RPC. */
+async function testRealSimulateTransactionThrowsOnForeignLegacyTx() {
+  const connection = new Connection("http://127.0.0.1:9");
+  const tx = sampleLegacyTx();
+  const foreign = {
+    feePayer: tx.feePayer,
+    instructions: tx.instructions,
+    signatures: tx.signatures,
+    recentBlockhash: tx.recentBlockhash,
+    lastValidBlockHeight: tx.lastValidBlockHeight,
+  };
+  await assert.rejects(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    () => connection.simulateTransaction(foreign as any),
+    (err: unknown) =>
+      err instanceof TypeError &&
+      /numRequiredSignatures/.test((err as Error).message)
+  );
+}
+
 const tests = [
   testPdaIndexesAreDistinct,
   testElectionWindow,
@@ -109,21 +197,28 @@ const tests = [
   testRemainingCandidatesStartAtOnChainCount,
   testSimulationErrorDoesNotBlameMissingProgram,
   testTallyIncludesZeroVoteCandidates,
+  testForeignLegacyTxHitsNumRequiredSignatures,
+  testVersionedSimulationBypassesInstanceof,
+  testRealSimulateTransactionThrowsOnForeignLegacyTx,
 ];
 
-let failed = 0;
-for (const t of tests) {
-  try {
-    t();
-    console.log(`ok  ${t.name}`);
-  } catch (e) {
-    failed += 1;
-    console.error(`not ok  ${t.name}`);
-    console.error(e);
+async function main() {
+  let failed = 0;
+  for (const t of tests) {
+    try {
+      await t();
+      console.log(`ok  ${t.name}`);
+    } catch (e) {
+      failed += 1;
+      console.error(`not ok  ${t.name}`);
+      console.error(e);
+    }
   }
+
+  if (failed) {
+    process.exit(1);
+  }
+  console.log(`${tests.length} passed`);
 }
 
-if (failed) {
-  process.exit(1);
-}
-console.log(`${tests.length} passed`);
+void main();
