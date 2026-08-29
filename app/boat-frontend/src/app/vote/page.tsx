@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BoatWalletButton from "../../components/BoatWalletButton";
@@ -42,6 +42,7 @@ export default function VotePage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const sending = useRef(false);
 
   useEffect(() => {
     const fromQuery = readPdaQuery();
@@ -118,6 +119,8 @@ export default function VotePage() {
   }, [election, wallet.publicKey]);
 
   const submit = useCallback(async () => {
+    if (sending.current) return;
+    sending.current = true;
     setErr(null);
     setBusy(true);
     try {
@@ -166,6 +169,7 @@ export default function VotePage() {
     } catch (e: unknown) {
       setErr(friendlyError(e));
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   }, [
@@ -209,8 +213,9 @@ export default function VotePage() {
         />
       </label>
       <button
+        type="button"
         disabled={busy}
-        onClick={load}
+        onClick={() => void load()}
         className="bg-teal-800 text-white px-4 py-2 disabled:opacity-40 mb-6"
       >
         {busy ? "Loading…" : "Load candidates"}
@@ -260,31 +265,51 @@ export default function VotePage() {
         </div>
       )}
 
-      {outcomes.length > 0 && (
-        <ul className="space-y-2 mb-6">
-          {outcomes.map((o) => (
-            <li key={o.index}>
-              <label className="flex items-center gap-3 cursor-pointer border border-transparent hover:border-stone-300 px-2 py-2">
-                <input
-                  type="radio"
-                  name="candidate"
-                  checked={selected === o.index}
-                  onChange={() => setSelected(o.index)}
-                />
-                <span>{o.label}</span>
-              </label>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <button
-        disabled={busy || selected === null}
-        onClick={submit}
-        className="bg-stone-900 text-white px-4 py-2 disabled:opacity-40"
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+        }}
       >
-        {privateMode ? "Cast private ballot" : "Cast / change vote"}
-      </button>
+        {outcomes.length > 0 && (
+          <fieldset className="mb-6 border-0 p-0">
+            <legend className="text-sm text-stone-600 mb-2">
+              Choose a candidate, then click Cast / change vote
+            </legend>
+            <ul className="space-y-2">
+              {outcomes.map((o) => (
+                <li key={o.index}>
+                  <label className="flex items-center gap-3 cursor-pointer border border-transparent hover:border-stone-300 px-2 py-2">
+                    <input
+                      type="radio"
+                      name="candidate"
+                      value={String(o.index)}
+                      checked={selected === o.index}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        setSelected(o.index);
+                      }}
+                    />
+                    <span>{o.label}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </fieldset>
+        )}
+
+        <button
+          type="button"
+          disabled={busy || selected === null}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            void submit();
+          }}
+          className="bg-stone-900 text-white px-4 py-2 disabled:opacity-40"
+        >
+          {privateMode ? "Cast private ballot" : "Cast / change vote"}
+        </button>
+      </form>
 
       {err && <p className="text-red-700 mt-4">{err}</p>}
       {receipt && (

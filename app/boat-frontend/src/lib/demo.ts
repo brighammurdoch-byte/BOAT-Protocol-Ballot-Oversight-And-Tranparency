@@ -11,6 +11,15 @@ export function friendlyError(err: unknown): string {
   if (lower.includes("electionnotstarted") || lower.includes("has not started")) {
     return "Voting has not opened yet. Wait until the election start time, then try again.";
   }
+  if (
+    lower.includes("electionalreadystarted") ||
+    lower.includes("voting has already started")
+  ) {
+    return "Voting already started, so new candidates cannot be added. Create a new election (Start at 0 now reserves a couple of minutes for setup).";
+  }
+  if (lower.includes("invalidoutcomeindex") || lower.includes("invalid outcome index")) {
+    return "A candidate transaction was simulated before the previous one confirmed. Retry — later candidates are now sent in one batched transaction.";
+  }
   if (lower.includes("electionended") || lower.includes("already over")) {
     return "This election has ended. New votes are not accepted.";
   }
