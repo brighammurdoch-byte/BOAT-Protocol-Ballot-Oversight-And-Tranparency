@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  Connection,
   Keypair,
   PublicKey,
   SystemProgram,
@@ -168,6 +169,26 @@ function testVersionedSimulationBypassesInstanceof() {
   assert.ok(wire.byteLength > 0);
 }
 
+/** Hit the real web3.js method — populate throws before any RPC. */
+async function testRealSimulateTransactionThrowsOnForeignLegacyTx() {
+  const connection = new Connection("http://127.0.0.1:9");
+  const tx = sampleLegacyTx();
+  const foreign = {
+    feePayer: tx.feePayer,
+    instructions: tx.instructions,
+    signatures: tx.signatures,
+    recentBlockhash: tx.recentBlockhash,
+    lastValidBlockHeight: tx.lastValidBlockHeight,
+  };
+  await assert.rejects(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    () => connection.simulateTransaction(foreign as any),
+    (err: unknown) =>
+      err instanceof TypeError &&
+      /numRequiredSignatures/.test((err as Error).message)
+  );
+}
+
 const tests = [
   testPdaIndexesAreDistinct,
   testElectionWindow,
@@ -178,21 +199,26 @@ const tests = [
   testTallyIncludesZeroVoteCandidates,
   testForeignLegacyTxHitsNumRequiredSignatures,
   testVersionedSimulationBypassesInstanceof,
+  testRealSimulateTransactionThrowsOnForeignLegacyTx,
 ];
 
-let failed = 0;
-for (const t of tests) {
-  try {
-    t();
-    console.log(`ok  ${t.name}`);
-  } catch (e) {
-    failed += 1;
-    console.error(`not ok  ${t.name}`);
-    console.error(e);
+async function main() {
+  let failed = 0;
+  for (const t of tests) {
+    try {
+      await t();
+      console.log(`ok  ${t.name}`);
+    } catch (e) {
+      failed += 1;
+      console.error(`not ok  ${t.name}`);
+      console.error(e);
+    }
   }
+
+  if (failed) {
+    process.exit(1);
+  }
+  console.log(`${tests.length} passed`);
 }
 
-if (failed) {
-  process.exit(1);
-}
-console.log(`${tests.length} passed`);
+void main();
