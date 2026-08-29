@@ -8,13 +8,11 @@ import {
 } from "@solana/web3.js";
 import type { AnchorWalletLike } from "./wallet";
 import {
-  MAX_SAFE_TX_BYTES,
   sendAndConfirmInstructions,
-  sleep,
-  unsignedTxSize,
   waitForAccount,
+  waitUntilSimulates,
 } from "./tx";
-import { parseCandidateLabels } from "./helpers";
+import { parseCandidateLabels, remainingCandidateLabels } from "./helpers";
 import {
   AnchorProvider,
   BorshAccountsCoder,
@@ -55,9 +53,14 @@ export {
   computeElectionWindow,
   parseCandidateLabels,
   parseVoterKeys,
+  remainingCandidateLabels,
   totalsWithAllCandidates,
 } from "./helpers";
-export { sendAndConfirmInstructions, waitForAccount } from "./tx";
+export {
+  formatSimulationError,
+  sendAndConfirmInstructions,
+  waitForAccount,
+} from "./tx";
 
 export function getBoatProgram(
   connection: Connection,
@@ -202,8 +205,9 @@ export async function initializeElection(
       rent: SYSVAR_RENT_PUBKEY,
     } as any)
     .instruction();
-  const sig = await sendAndConfirmInstructions(connection, wallet, [ix]);
-  await waitForAccount(connection, election);
+  const sig = await sendAndConfirmInstructions(connection, wallet, [ix], {
+    waitFor: [election],
+  });
   return { signature: sig, election, electionConfig, sbtMint };
 }
 
@@ -273,7 +277,7 @@ export async function addOutcomes(
   const program = getBoatProgram(connection, wallet, programId);
   const data = await (program.account as any).election.fetch(election);
   const have = Number(data.outcomeCount ?? data.outcome_count ?? 0);
-  const toAdd = clean.slice(have);
+  const toAdd = remainingCandidateLabels(clean, have);
   if (toAdd.length === 0) {
     return { signature: "", outcomes: [] as PublicKey[], added: 0, skipped: true };
   }
@@ -291,14 +295,12 @@ export async function addOutcomes(
       )
     );
   }
-  const sig = await sendAndConfirmInstructions(
-    connection,
-    wallet,
-    built.map((b) => b.ix)
-  );
-  for (const b of built) {
-    await waitForAccount(connection, b.outcome);
-  }
+  const ixs = built.map((b) => b.ix);
+  // Do not open Phantom until the prior create (and outcome_count) is visible.
+  await waitUntilSimulates(connection, wallet, ixs);
+  const sig = await sendAndConfirmInstructions(connection, wallet, ixs, {
+    waitFor: built.map((b) => b.outcome),
+  });
   return {
     signature: sig,
     outcomes: built.map((b) => b.outcome),
@@ -308,8 +310,14 @@ export async function addOutcomes(
 }
 
 /**
- * Create the election and add all candidates with as few wallet prompts as
- * possible (one tx when it fits, otherwise initialize then one batched add).
+ * Two wallet prompts, never more:
+ *   1. initialize_election (wait until the PDA is fetchable)
+ *   2. every remaining add_outcome in **one** transaction
+ *
+ * Do not pack initialize + adds together — Token-2022 mint init plus three
+ * candidate PDAs is what Phantom hard-blocks (first click lands nothing).
+ * Do not send add_N until add_{N-1} is confirmed; the program requires
+ * `outcome_count == index` at simulation time.
  */
 export async function initializeElectionWithOutcomes(
   connection: Connection,
@@ -318,97 +326,36 @@ export async function initializeElectionWithOutcomes(
   programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
 ) {
   const labels = parseCandidateLabels(args.candidateLabels.join("\n"));
-  const program = getBoatProgram(connection, wallet, programId);
   const [election] = pdaElection(wallet.publicKey, args.title, programId);
   const [electionConfig] = pdaElectionConfig(election, programId);
   const [sbtMint] = pdaSbtMint(election, programId);
 
   const existing = await connection.getAccountInfo(election, "confirmed");
-  if (existing) {
-    const added = await addOutcomes(connection, wallet, election, labels, programId);
-    return {
-      signature: added.signature,
-      signatures: added.signature ? [added.signature] : [],
-      election,
-      electionConfig,
-      sbtMint,
-      candidateCount: labels.length,
-      reusedExisting: true,
-    };
+  const signatures: string[] = [];
+  let reusedExisting = Boolean(existing);
+
+  if (!existing) {
+    const created = await initializeElection(connection, wallet, args, programId);
+    signatures.push(created.signature);
   }
 
-  const initIx = await program.methods
-    .initializeElection(args.title, new BN(args.startTime), new BN(args.endTime))
-    .accounts({
-      authority: wallet.publicKey,
-      election,
-      electionConfig,
-      sbtMint,
-      systemProgram: SystemProgram.programId,
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
-      rent: SYSVAR_RENT_PUBKEY,
-    } as any)
-    .instruction();
+  const added = await addOutcomes(
+    connection,
+    wallet,
+    election,
+    labels,
+    programId
+  );
+  if (added.signature) signatures.push(added.signature);
 
-  const addBuilt = [];
-  for (let i = 0; i < labels.length; i++) {
-    addBuilt.push(
-      await buildAddOutcomeIx(connection, wallet, election, labels[i], i, programId)
-    );
-  }
-  const addIxs = addBuilt.map((b) => b.ix);
-
-  const { blockhash, lastValidBlockHeight } =
-    await connection.getLatestBlockhash("confirmed");
-  const combined = new Transaction({
-    feePayer: wallet.publicKey,
-    blockhash,
-    lastValidBlockHeight,
-  });
-  combined.add(initIx, ...addIxs);
-
-  if (labels.length > 0 && unsignedTxSize(combined) <= MAX_SAFE_TX_BYTES) {
-    const signed = await wallet.signTransaction(combined);
-    const sig = await connection.sendRawTransaction(signed.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: "confirmed",
-      maxRetries: 5,
-    });
-    const conf = await connection.confirmTransaction(
-      { signature: sig, blockhash, lastValidBlockHeight },
-      "confirmed"
-    );
-    if (conf.value.err) {
-      throw new Error(`Transaction failed: ${JSON.stringify(conf.value.err)}`);
-    }
-    await waitForAccount(connection, election);
-    return {
-      signature: sig,
-      signatures: [sig],
-      election,
-      electionConfig,
-      sbtMint,
-      candidateCount: labels.length,
-      reusedExisting: false,
-    };
-  }
-
-  const initSig = await sendAndConfirmInstructions(connection, wallet, [initIx]);
-  await waitForAccount(connection, election);
-  // Give secondary RPCs (Phantom simulation) a beat to see outcome_count=0.
-  await sleep(800);
-  const added =
-    addIxs.length > 0
-      ? await addOutcomes(connection, wallet, election, labels, programId)
-      : { signature: "", added: 0 };
   return {
-    signature: added.signature || initSig,
-    signatures: [initSig, ...(added.signature ? [added.signature] : [])],
+    signature: signatures[signatures.length - 1] ?? "",
+    signatures,
     election,
     electionConfig,
     sbtMint,
     candidateCount: labels.length,
-    reusedExisting: false,
+    reusedExisting,
   };
 }
 
@@ -613,6 +560,8 @@ export async function fetchPrivateTallies(
   return out;
 }
 
+const inflightRegisters = new Set<string>();
+
 export async function registerVoter(
   connection: Connection,
   authorityWallet: AnchorWalletLike,
@@ -632,35 +581,45 @@ export async function registerVoter(
     TOKEN_2022_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
-
-  const already = await connection.getAccountInfo(voterRegistry, "confirmed");
-  if (already) {
-    return {
-      signature: "",
-      voterRegistry,
-      voterTokenAccount,
-      skipped: true,
-    };
+  const lockKey = `${election.toBase58()}:${voter.toBase58()}`;
+  if (inflightRegisters.has(lockKey)) {
+    return { signature: "", voterRegistry, voterTokenAccount, skipped: true };
   }
+  inflightRegisters.add(lockKey);
+  try {
+    const already = await connection.getAccountInfo(voterRegistry, "confirmed");
+    if (already) {
+      return {
+        signature: "",
+        voterRegistry,
+        voterTokenAccount,
+        skipped: true,
+      };
+    }
 
-  const ix = await program.methods
-    .registerVoter(new BN(weight.toString()))
-    .accounts({
-      authority: authorityWallet.publicKey,
-      election,
-      electionConfig,
-      sbtMint,
-      voter,
-      voterRegistry,
-      voterTokenAccount,
-      systemProgram: SystemProgram.programId,
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-    } as any)
-    .instruction();
-  const sig = await sendAndConfirmInstructions(connection, authorityWallet, [ix]);
+    const ix = await program.methods
+      .registerVoter(new BN(weight.toString()))
+      .accounts({
+        authority: authorityWallet.publicKey,
+        election,
+        electionConfig,
+        sbtMint,
+        voter,
+        voterRegistry,
+        voterTokenAccount,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      } as any)
+      .instruction();
+    const sig = await sendAndConfirmInstructions(connection, authorityWallet, [ix], {
+      waitFor: [voterRegistry],
+    });
 
-  return { signature: sig, voterRegistry, voterTokenAccount, skipped: false };
+    return { signature: sig, voterRegistry, voterTokenAccount, skipped: false };
+  } finally {
+    inflightRegisters.delete(lockKey);
+  }
 }
 
 export async function fetchElection(

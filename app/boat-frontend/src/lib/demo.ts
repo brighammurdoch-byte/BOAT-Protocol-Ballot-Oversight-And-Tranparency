@@ -38,8 +38,16 @@ export function friendlyError(err: unknown): string {
   if (lower.includes("invalid public key") || lower.includes("non-base58")) {
     return "That does not look like a valid base58 public key / election PDA.";
   }
-  if (lower.includes("already in use") || lower.includes("already been processed")) {
-    return "This account may already exist (duplicate title or already registered). Try a new title or skip that voter.";
+  if (
+    lower.includes("already in use") ||
+    lower.includes("already been processed") ||
+    lower.includes("already exists on devnet") ||
+    lower.includes("duplicate election title")
+  ) {
+    return "This account may already exist (duplicate title or already registered). Try a new title, or click Create again to add any missing candidates.";
+  }
+  if (lower.includes("transaction simulation failed")) {
+    return raw;
   }
   if (
     lower.includes("blockhash not found") ||
@@ -47,7 +55,7 @@ export function friendlyError(err: unknown): string {
     lower.includes("simulation failed") ||
     lower.includes("proceeding is unsafe")
   ) {
-    return "The transaction was not sent. Phantom could not simulate it — usually Phantom is not on Devnet, or the BOAT program is not deployed on this cluster. Switch Phantom to Devnet and check Explorer; if nothing new appears under your wallet, nothing landed.";
+    return "The transaction was not sent — Phantom blocked simulation. This is usually a follow-up tx that ran before the previous one confirmed (or a duplicate title/register). Retry once; create now waits for confirm before adding candidates.";
   }
   return raw;
 }

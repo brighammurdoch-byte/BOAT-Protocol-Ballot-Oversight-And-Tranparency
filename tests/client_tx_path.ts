@@ -4,9 +4,11 @@ import {
   CANDIDATE_SETUP_LEAD_SEC,
   DEFAULT_BOAT_PROGRAM_ID,
   computeElectionWindow,
+  formatSimulationError,
   parseCandidateLabels,
   parseVoterKeys,
   pdaOutcome,
+  remainingCandidateLabels,
   totalsWithAllCandidates,
 } from "../packages/boat-sdk/src/index";
 
@@ -70,6 +72,27 @@ function testParseCandidates() {
   ]);
 }
 
+function testRemainingCandidatesStartAtOnChainCount() {
+  assert.deepEqual(remainingCandidateLabels(["Alice", "Bob", "Carol"], 0), [
+    "Alice",
+    "Bob",
+    "Carol",
+  ]);
+  assert.deepEqual(remainingCandidateLabels(["Alice", "Bob", "Carol"], 2), [
+    "Carol",
+  ]);
+  assert.deepEqual(remainingCandidateLabels(["Alice", "Bob", "Carol"], 3), []);
+}
+
+function testSimulationErrorDoesNotBlameMissingProgram() {
+  const msg = formatSimulationError(
+    { InstructionError: [0, "InvalidAccountData"] },
+    ["Program log: Allocate: account already in use"]
+  );
+  assert.match(msg, /already exists/i);
+  assert.doesNotMatch(msg, /not deployed/i);
+}
+
 function testTallyIncludesZeroVoteCandidates() {
   const rows = totalsWithAllCandidates({ Alice: 1n }, ["Alice", "Bob", "Carol"]);
   const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.weight]));
@@ -83,6 +106,8 @@ const tests = [
   testElectionWindow,
   testParseVoters,
   testParseCandidates,
+  testRemainingCandidatesStartAtOnChainCount,
+  testSimulationErrorDoesNotBlameMissingProgram,
   testTallyIncludesZeroVoteCandidates,
 ];
 

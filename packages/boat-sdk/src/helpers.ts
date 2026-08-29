@@ -41,6 +41,15 @@ export function parseVoterKeys(raw: string): PublicKey[] {
   return out;
 }
 
+/** Labels not yet on-chain, in index order (`outcome_count` must match). */
+export function remainingCandidateLabels(
+  allLabels: string[],
+  alreadyOnChain: number
+): string[] {
+  const have = Math.max(0, alreadyOnChain);
+  return allLabels.slice(have);
+}
+
 export function parseCandidateLabels(raw: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];

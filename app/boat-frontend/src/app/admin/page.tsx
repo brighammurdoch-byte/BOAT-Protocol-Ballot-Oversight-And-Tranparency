@@ -343,6 +343,10 @@ export default function AdminPage() {
         >
           {busy ? "Working…" : "Create election + candidates"}
         </button>
+        <p className="text-xs text-stone-500">
+          Two Phantom prompts: create the election, wait for confirm, then all
+          candidates in one transaction.
+        </p>
       </section>
 
       {(checklist.created || electionPda) && (
