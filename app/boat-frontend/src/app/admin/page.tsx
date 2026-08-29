@@ -1,17 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BoatWalletButton from "../../components/BoatWalletButton";
 import { PublicKey } from "@solana/web3.js";
 import {
   DEFAULT_BOAT_PROGRAM_ID,
-  initializeElection,
-  addOutcome,
+  initializeElectionWithOutcomes,
   registerVoter,
   enablePrivateBallots,
   explorerTxUrl,
+  computeElectionWindow,
+  parseCandidateLabels,
+  parseVoterKeys,
 } from "@boat/sdk";
 import {
   copyText,
@@ -54,6 +56,7 @@ export default function AdminPage() {
   });
   const [now, setNow] = useState<number | null>(null);
   const [programMissing, setProgramMissing] = useState(false);
+  const sending = useRef(false);
 
   useEffect(() => {
     const fromQuery = readPdaQuery();
@@ -83,11 +86,14 @@ export default function AdminPage() {
   }, []);
 
   const preview = useMemo(() => {
-    const base = now ?? 0;
-    const start = Math.floor(base / 1000) + Math.max(1, startInMin) * 60;
-    const end = start + Math.max(1, durationHours) * 3600;
-    return { start, end };
-  }, [startInMin, durationHours, now]);
+    const labels = parseCandidateLabels(candidates);
+    return computeElectionWindow({
+      startInMin,
+      durationHours,
+      nowMs: now ?? Date.now(),
+      candidateCount: labels.length,
+    });
+  }, [startInMin, durationHours, now, candidates]);
 
   const canWrite = useMemo(
     () => Boolean(wallet.publicKey && wallet.signTransaction),
@@ -97,35 +103,42 @@ export default function AdminPage() {
   const append = (line: string) => setLog((prev) => `${prev}${line}\n`);
 
   const onCreate = async () => {
+    if (sending.current) return;
+    sending.current = true;
     setErr(null);
     setBusy(true);
     try {
       if (!wallet.publicKey || !wallet.signTransaction) {
         throw new Error("Connect a wallet first.");
       }
-      const startTime = preview.start;
-      const endTime = preview.end;
-      const res = await initializeElection(connection, wallet as any, {
+      const labels = parseCandidateLabels(candidates);
+      if (labels.length === 0) {
+        throw new Error("Add at least one candidate (one per line).");
+      }
+      const { start: startTime, end: endTime } = computeElectionWindow({
+        startInMin,
+        durationHours,
+        candidateCount: labels.length,
+      });
+      const res = await initializeElectionWithOutcomes(connection, wallet as any, {
         title: title.trim(),
         startTime,
         endTime,
+        candidateLabels: labels,
       });
       const pda = res.election.toBase58();
       setElectionPda(pda);
-      append(`Created election ${pda}`);
+      if (res.reusedExisting) {
+        append(`Election already existed ${pda} — added any missing candidates.`);
+      } else {
+        append(`Created election ${pda}`);
+      }
       append(`Starts ${formatLocal(startTime)} — ${countdownLabel(startTime)}`);
       append(`Ends ${formatLocal(endTime)}`);
-      append(`Tx: ${explorerTxUrl(res.signature, "devnet")}`);
-
-      const labels = candidates
-        .split(/\r?\n/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      for (const [i, label] of labels.entries()) {
-        const o = await addOutcome(connection, wallet as any, res.election, label, i);
-        append(`Added candidate ${i}: ${label}`);
-        append(`  ${explorerTxUrl(o.signature, "devnet")}`);
+      for (const sig of res.signatures) {
+        append(`Tx: ${explorerTxUrl(sig, "devnet")}`);
       }
+      append(`Candidates on-chain: ${labels.join(", ")}`);
       setChecklist({
         created: true,
         candidates: labels.length,
@@ -136,11 +149,14 @@ export default function AdminPage() {
     } catch (e: unknown) {
       setErr(friendlyError(e));
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   };
 
   const onRegister = async () => {
+    if (sending.current) return;
+    sending.current = true;
     setErr(null);
     setBusy(true);
     try {
@@ -149,14 +165,10 @@ export default function AdminPage() {
       }
       if (!electionPda.trim()) throw new Error("Election PDA required.");
       const election = new PublicKey(electionPda.trim());
-      const keys = voters
-        .split(/[\s,]+/)
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const keys = parseVoterKeys(voters);
       if (keys.length === 0) throw new Error("Paste at least one voter pubkey.");
       let n = 0;
-      for (const k of keys) {
-        const voter = new PublicKey(k);
+      for (const voter of keys) {
         const r = await registerVoter(
           connection,
           wallet as any,
@@ -164,7 +176,11 @@ export default function AdminPage() {
           voter,
           BigInt(1)
         );
-        append(`Registered ${k}`);
+        if (r.skipped) {
+          append(`Already registered ${voter.toBase58()} — skipped extra prompt.`);
+          continue;
+        }
+        append(`Registered ${voter.toBase58()}`);
         append(`  ${explorerTxUrl(r.signature, "devnet")}`);
         n += 1;
       }
@@ -172,6 +188,7 @@ export default function AdminPage() {
     } catch (e: unknown) {
       setErr(friendlyError(e));
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   };
@@ -290,10 +307,15 @@ export default function AdminPage() {
             <span className="text-sm text-stone-600">Start in (minutes)</span>
             <input
               type="number"
+              min={0}
               className="mt-1 w-full border border-stone-300 bg-white/70 px-3 py-2"
               value={startInMin}
               onChange={(e) => setStartInMin(Number(e.target.value))}
             />
+            <span className="block mt-1 text-xs text-stone-500">
+              0 still reserves ~2 min so every candidate can land before voting
+              opens.
+            </span>
           </label>
           <label className="block">
             <span className="text-sm text-stone-600">Duration (hours)</span>
@@ -314,12 +336,17 @@ export default function AdminPage() {
           />
         </label>
         <button
+          type="button"
           disabled={!canWrite || busy || now == null}
-          onClick={onCreate}
+          onClick={() => void onCreate()}
           className="bg-teal-800 text-white px-4 py-2 disabled:opacity-40"
         >
           {busy ? "Working…" : "Create election + candidates"}
         </button>
+        <p className="text-xs text-stone-500">
+          Two Phantom prompts: create the election, wait for confirm, then all
+          candidates in one transaction.
+        </p>
       </section>
 
       {(checklist.created || electionPda) && (
@@ -392,8 +419,9 @@ export default function AdminPage() {
           />
         </label>
         <button
+          type="button"
           disabled={!canWrite || busy}
-          onClick={onRegister}
+          onClick={() => void onRegister()}
           className="bg-stone-800 text-white px-4 py-2 disabled:opacity-40"
         >
           Register voters
@@ -418,8 +446,9 @@ export default function AdminPage() {
           />
         </label>
         <button
+          type="button"
           disabled={!canWrite || busy || !electionPda}
-          onClick={onEnablePrivate}
+          onClick={() => void onEnablePrivate()}
           className="bg-teal-900 text-white px-4 py-2 disabled:opacity-40"
         >
           Enable private ballots (dev)

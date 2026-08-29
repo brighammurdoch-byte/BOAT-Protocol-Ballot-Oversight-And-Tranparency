@@ -13,6 +13,7 @@ import {
   fetchPrivateTallies,
   fetchVoterRegistriesForElection,
   tallyFromRegistries,
+  totalsWithAllCandidates,
 } from "@boat/sdk";
 import { friendlyError, readPdaQuery } from "../../lib/demo";
 
@@ -122,14 +123,21 @@ export default function ElectionTallyPage() {
         DEFAULT_BOAT_PROGRAM_ID,
         election
       );
+      const outcomes = await fetchOutcomes(
+        connection,
+        election,
+        outcomeCount,
+        dummy
+      );
       const totalW = rows.reduce((s, r) => s + r.weight, 0n);
       const tally = tallyFromRegistries(rows, totalW, quorumPct);
       const mine = wallet.publicKey
         ? rows.find((r) => r.voter.equals(wallet.publicKey!))
         : undefined;
-      const totals = Object.entries(tally.totalsByCandidate)
-        .map(([label, weight]) => ({ label, weight }))
-        .sort((a, b) => (a.weight === b.weight ? 0 : a.weight > b.weight ? -1 : 1));
+      const totals = totalsWithAllCandidates(
+        tally.totalsByCandidate,
+        outcomes.map((o) => o.label)
+      );
       setView({
         election: election.toBase58(),
         totals,
@@ -180,8 +188,9 @@ export default function ElectionTallyPage() {
       </label>
       <div className="flex flex-wrap gap-3 mb-8">
         <button
+          type="button"
           disabled={busy}
-          onClick={load}
+          onClick={() => void load()}
           className="bg-teal-800 text-white px-4 py-2 disabled:opacity-40"
         >
           {busy ? "Loading…" : "Load tally"}

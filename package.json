@@ -5,7 +5,8 @@
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
     "demo:usu": "tsx scripts/usu_demo.ts",
     "demo:zk": "tsx scripts/zk_demo.ts",
-    "test": "anchor test --skip-build --validator legacy"
+    "test": "anchor test --skip-build --validator legacy",
+    "test:client": "tsx tests/client_tx_path.ts"
   },
   "dependencies": {
     "@anchor-lang/core": "1.1.2",
