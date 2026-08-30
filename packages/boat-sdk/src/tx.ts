@@ -8,6 +8,15 @@ import {
 } from "@solana/web3.js";
 import type { AnchorWalletLike } from "./wallet";
 
+/** Slots that must remain after Phantom returns or we rebuild with a fresh hash. */
+export const MIN_BLOCKHASH_SLOTS_REMAINING = 20;
+
+/** How often to rebroadcast the same signed bytes while the hash is still valid. */
+export const TX_RESEND_INTERVAL_MS = 1_500;
+
+/** Fresh blockhash + Phantom approve attempts for one instruction set. */
+export const MAX_SIGN_ATTEMPTS = 3;
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -40,6 +49,48 @@ export function formatSimulationError(
   return `Transaction simulation failed: ${raw}`;
 }
 
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export function isExpiredBlockhashError(err: unknown): boolean {
+  const lower = errorMessage(err).toLowerCase();
+  return (
+    lower.includes("block height exceeded") ||
+    lower.includes("blockhash not found") ||
+    lower.includes("blockhash expired") ||
+    (lower.includes("expired") && lower.includes("block"))
+  );
+}
+
+export function isAlreadyProcessedError(err: unknown): boolean {
+  const lower = errorMessage(err).toLowerCase();
+  return (
+    lower.includes("already been processed") ||
+    lower.includes("already processed")
+  );
+}
+
+/** `currentHeight + minSlotsRemaining < lastValidBlockHeight` — Solana's confirm predicate. */
+export function blockhashStillValid(
+  currentHeight: number,
+  lastValidBlockHeight: number,
+  minSlotsRemaining = 0
+): boolean {
+  return currentHeight + minSlotsRemaining < lastValidBlockHeight;
+}
+
+export function confirmationSatisfied(
+  confirmationStatus: string | null | undefined,
+  commitment: Commitment
+): boolean {
+  if (!confirmationStatus) return false;
+  if (confirmationStatus === "finalized") return true;
+  if (confirmationStatus === "confirmed") return commitment !== "finalized";
+  if (confirmationStatus === "processed") return commitment === "processed";
+  return false;
+}
+
 export async function waitForAccount(
   connection: Connection,
   pubkey: PublicKey,
@@ -54,6 +105,16 @@ export async function waitForAccount(
   throw new Error(
     `Timed out waiting for ${pubkey.toBase58()} to confirm on Devnet.`
   );
+}
+
+export async function accountsExist(
+  connection: Connection,
+  pubkeys: PublicKey[],
+  commitment: Commitment = "confirmed"
+): Promise<boolean> {
+  if (pubkeys.length === 0) return false;
+  const infos = await connection.getMultipleAccountsInfo(pubkeys, commitment);
+  return infos.every((info) => info != null);
 }
 
 /**
@@ -153,6 +214,72 @@ async function latestTx(
   );
 }
 
+function serializeSigned(signed: { serialize?: (opts?: unknown) => Uint8Array | Buffer }): Uint8Array {
+  if (typeof signed.serialize !== "function") {
+    throw new Error("Wallet did not return a serializable transaction.");
+  }
+  const raw = signed.serialize();
+  return raw instanceof Uint8Array ? raw : Uint8Array.from(raw);
+}
+
+/**
+ * Rebroadcast the same signed bytes until confirmed or the hash expires.
+ * `confirmTransaction` only polls — Devnet routinely drops the first send.
+ */
+export async function sendRawUntilConfirmed(
+  connection: Connection,
+  raw: Uint8Array,
+  _blockhash: string,
+  lastValidBlockHeight: number,
+  commitment: Commitment = "confirmed"
+): Promise<string> {
+  let signature: string | null = null;
+
+  const sendOnce = async (): Promise<string> => {
+    try {
+      const sig = await connection.sendRawTransaction(raw, {
+        skipPreflight: true,
+        maxRetries: 0,
+      });
+      signature = sig;
+      return sig;
+    } catch (e) {
+      if (isAlreadyProcessedError(e) && signature) return signature;
+      if (isExpiredBlockhashError(e)) {
+        throw new Error(
+          signature
+            ? `Signature ${signature} has expired: block height exceeded.`
+            : "Transaction blockhash expired: block height exceeded."
+        );
+      }
+      if (signature) return signature;
+      throw e;
+    }
+  };
+
+  signature = await sendOnce();
+
+  while (true) {
+    const height = await connection.getBlockHeight(commitment);
+    if (!blockhashStillValid(height, lastValidBlockHeight)) {
+      throw new Error(
+        `Signature ${signature} has expired: block height exceeded.`
+      );
+    }
+
+    const status = await connection.getSignatureStatus(signature);
+    if (status.value?.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
+    }
+    if (confirmationSatisfied(status.value?.confirmationStatus, commitment)) {
+      return signature;
+    }
+
+    await sendOnce();
+    await sleep(TX_RESEND_INTERVAL_MS);
+  }
+}
+
 /** Simulate on our RPC before Phantom ever sees the tx. */
 export async function simulateInstructions(
   connection: Connection,
@@ -187,11 +314,11 @@ export async function waitUntilSimulates(
   while (Date.now() - start < timeoutMs) {
     try {
       await simulateInstructions(connection, wallet, ixs);
-      await sleep(600);
+      await sleep(400);
       return;
     } catch (e) {
       lastErr = e;
-      await sleep(500);
+      await sleep(400);
     }
   }
   throw lastErr instanceof Error
@@ -200,14 +327,22 @@ export async function waitUntilSimulates(
 }
 
 /**
- * Simulate on our RPC, then sign once, send once, confirm at `confirmed`.
+ * Simulate on our RPC (optional), then:
+ *   1. fetch a fresh blockhash immediately before Phantom
+ *   2. drop the signed bytes if the hash is already dead after approve
+ *   3. rebroadcast until confirmed, or rebuild + re-sign if it expires
+ *
  * Callers must not queue a dependent tx until this resolves.
  */
 export async function sendAndConfirmInstructions(
   connection: Connection,
   wallet: AnchorWalletLike,
   ixs: TransactionInstruction[],
-  opts?: { commitment?: Commitment; waitFor?: PublicKey[] }
+  opts?: {
+    commitment?: Commitment;
+    waitFor?: PublicKey[];
+    skipSimulate?: boolean;
+  }
 ): Promise<string> {
   if (ixs.length === 0) {
     throw new Error("No instructions to send.");
@@ -216,33 +351,87 @@ export async function sendAndConfirmInstructions(
     throw new Error("Connect a wallet first.");
   }
   const commitment = opts?.commitment ?? "confirmed";
-  await simulateInstructions(connection, wallet, ixs, commitment);
-  const tx = await latestTx(connection, wallet, ixs, commitment);
-  const blockhash = tx.recentBlockhash!;
-  const lastValidBlockHeight = tx.lastValidBlockHeight!;
-  const signed = await wallet.signTransaction(tx);
-  if (!signed) {
-    throw new Error("Wallet returned an empty signed transaction.");
+  const waitFor = opts?.waitFor ?? [];
+
+  if (!opts?.skipSimulate) {
+    await simulateInstructions(connection, wallet, ixs, commitment);
   }
-  const raw =
-    typeof signed.serialize === "function"
-      ? signed.serialize()
-      : (() => {
-          throw new Error("Wallet did not return a serializable transaction.");
-        })();
-  const sig = await connection.sendRawTransaction(raw, {
-    skipPreflight: true,
-    maxRetries: 5,
-  });
-  const conf = await connection.confirmTransaction(
-    { signature: sig, blockhash, lastValidBlockHeight },
-    commitment
-  );
-  if (conf.value.err) {
-    throw new Error(`Transaction failed: ${JSON.stringify(conf.value.err)}`);
+
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= MAX_SIGN_ATTEMPTS; attempt++) {
+    if (waitFor.length > 0 && (await accountsExist(connection, waitFor, commitment))) {
+      return "";
+    }
+
+    const tx = await latestTx(connection, wallet, ixs, commitment);
+    const blockhash = tx.recentBlockhash!;
+    const lastValidBlockHeight = tx.lastValidBlockHeight!;
+
+    const heightBefore = await connection.getBlockHeight(commitment);
+    if (
+      !blockhashStillValid(
+        heightBefore,
+        lastValidBlockHeight,
+        MIN_BLOCKHASH_SLOTS_REMAINING
+      )
+    ) {
+      lastErr = new Error("Latest blockhash was already near expiry; fetching another.");
+      continue;
+    }
+
+    const signed = await wallet.signTransaction(tx);
+    if (!signed) {
+      throw new Error("Wallet returned an empty signed transaction.");
+    }
+
+    const usedBlockhash =
+      typeof signed.recentBlockhash === "string" && signed.recentBlockhash
+        ? signed.recentBlockhash
+        : blockhash;
+    const usedLastValid =
+      typeof signed.lastValidBlockHeight === "number"
+        ? signed.lastValidBlockHeight
+        : lastValidBlockHeight;
+
+    const heightAfter = await connection.getBlockHeight(commitment);
+    if (
+      !blockhashStillValid(
+        heightAfter,
+        usedLastValid,
+        MIN_BLOCKHASH_SLOTS_REMAINING
+      )
+    ) {
+      lastErr = new Error(
+        "Transaction blockhash expired while waiting for wallet approval: block height exceeded."
+      );
+      continue;
+    }
+
+    const raw = serializeSigned(signed);
+    try {
+      const sig = await sendRawUntilConfirmed(
+        connection,
+        raw,
+        usedBlockhash,
+        usedLastValid,
+        commitment
+      );
+      for (const pk of waitFor) {
+        await waitForAccount(connection, pk);
+      }
+      return sig;
+    } catch (e) {
+      lastErr = e;
+      if (waitFor.length > 0 && (await accountsExist(connection, waitFor, commitment))) {
+        return errorMessage(e).match(/[1-9A-HJ-NP-Za-km-z]{64,}/)?.[0] ?? "";
+      }
+      if (!isExpiredBlockhashError(e) || attempt === MAX_SIGN_ATTEMPTS) {
+        throw e instanceof Error ? e : new Error(errorMessage(e));
+      }
+    }
   }
-  for (const pk of opts?.waitFor ?? []) {
-    await waitForAccount(connection, pk);
-  }
-  return sig;
+
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error("Transaction blockhash expired: block height exceeded.");
 }

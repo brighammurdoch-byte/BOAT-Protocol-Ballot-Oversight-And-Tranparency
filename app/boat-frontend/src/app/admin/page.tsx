@@ -313,8 +313,8 @@ export default function AdminPage() {
               onChange={(e) => setStartInMin(Number(e.target.value))}
             />
             <span className="block mt-1 text-xs text-stone-500">
-              0 still reserves ~2 min so every candidate can land before voting
-              opens.
+              0 still reserves ~10 min so create, candidates, and one retry can
+              all land before voting opens.
             </span>
           </label>
           <label className="block">

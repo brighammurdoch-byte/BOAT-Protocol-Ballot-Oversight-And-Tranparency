@@ -15,7 +15,7 @@ export function friendlyError(err: unknown): string {
     lower.includes("electionalreadystarted") ||
     lower.includes("voting has already started")
   ) {
-    return "Voting already started, so new candidates cannot be added. Create a new election (Start at 0 now reserves a couple of minutes for setup).";
+    return "Voting already started, so new candidates cannot be added. Create a new election (Start at 0 reserves about 10 minutes so candidates can land).";
   }
   if (lower.includes("invalidoutcomeindex") || lower.includes("invalid outcome index")) {
     return "A candidate transaction was simulated before the previous one confirmed. Retry — later candidates are now sent in one batched transaction.";
@@ -48,6 +48,12 @@ export function friendlyError(err: unknown): string {
   }
   if (lower.includes("transaction simulation failed")) {
     return raw;
+  }
+  if (
+    lower.includes("block height exceeded") ||
+    (lower.includes("expired") && lower.includes("block"))
+  ) {
+    return "A signed transaction expired before Devnet accepted it. The app refreshes the blockhash and resends — click Create again with the same title if candidates are still missing.";
   }
   if (
     lower.includes("blockhash not found") ||
