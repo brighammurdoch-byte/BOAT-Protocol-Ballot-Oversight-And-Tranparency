@@ -11,13 +11,18 @@ import {
   DEFAULT_BOAT_PROGRAM_ID,
   asVersionedForSimulation,
   assertMessageHeader,
+  blockhashStillValid,
   buildLegacyTransaction,
   computeElectionWindow,
+  confirmationSatisfied,
   formatSimulationError,
+  isAlreadyProcessedError,
+  isExpiredBlockhashError,
   parseCandidateLabels,
   parseVoterKeys,
   pdaOutcome,
   remainingCandidateLabels,
+  sendRawUntilConfirmed,
   simulateDispatchKind,
   totalsWithAllCandidates,
 } from "../packages/boat-sdk/src/index";
@@ -169,6 +174,107 @@ function testVersionedSimulationBypassesInstanceof() {
   assert.ok(wire.byteLength > 0);
 }
 
+function testSetupLeadOutlivesExpiredCandidatesTx() {
+  // One Devnet blockhash is ~60–90s. Init + dropped candidates confirm wait
+  // burns that window; 120s left Start-in-0 elections with 0 candidates.
+  assert.ok(
+    CANDIDATE_SETUP_LEAD_SEC >= 480,
+    `CANDIDATE_SETUP_LEAD_SEC=${CANDIDATE_SETUP_LEAD_SEC} must survive init + expiry + retry`
+  );
+  const nowMs = 1_700_000_000_000;
+  const nowSec = Math.floor(nowMs / 1000);
+  const immediate = computeElectionWindow({
+    startInMin: 0,
+    durationHours: 2,
+    nowMs,
+    candidateCount: 3,
+  });
+  assert.equal(immediate.start, nowSec + CANDIDATE_SETUP_LEAD_SEC);
+  assert.ok(immediate.start - nowSec >= 480);
+}
+
+function testBlockhashValidityAndExpiryDetection() {
+  assert.equal(blockhashStillValid(100, 150), true);
+  assert.equal(blockhashStillValid(150, 150), false);
+  assert.equal(blockhashStillValid(151, 150), false);
+  assert.equal(blockhashStillValid(129, 150, 20), true);
+  assert.equal(blockhashStillValid(130, 150, 20), false);
+
+  assert.equal(confirmationSatisfied("confirmed", "confirmed"), true);
+  assert.equal(confirmationSatisfied("processed", "confirmed"), false);
+  assert.equal(confirmationSatisfied("finalized", "confirmed"), true);
+  assert.equal(confirmationSatisfied(undefined, "confirmed"), false);
+
+  assert.ok(
+    isExpiredBlockhashError(
+      new Error(
+        "Signature V2qSzrNUuJXBN8YqyvWUrqmsmC9ogQZwZFRbPnzoiyj7Xo5SDYqRVVsm6ZiEWdkSaJKBmzsU2BAD2ZqHypPW1bF has expired: block height exceeded."
+      )
+    )
+  );
+  assert.ok(isExpiredBlockhashError(new Error("blockhash not found")));
+  assert.ok(!isExpiredBlockhashError(new Error("user rejected the request")));
+  assert.ok(isAlreadyProcessedError(new Error("This transaction has already been processed")));
+}
+
+/** Dropped first send must be rebroadcast until confirmed — the live Devnet bug. */
+async function testSendRawResendsUntilConfirmed() {
+  let sends = 0;
+  let polls = 0;
+  const connection = {
+    async sendRawTransaction() {
+      sends += 1;
+      return "5QKym4ZZaZf1x5QhoRuvB9LydWEQSTeHfqNNWJbWb7ULP2qeoPKJJxnW8JzAD1YPHnfBwDeWqR5cVgbTtD5QdaiC";
+    },
+    async getBlockHeight() {
+      return 100;
+    },
+    async getSignatureStatus() {
+      polls += 1;
+      if (polls < 3) return { value: null };
+      return { value: { err: null, confirmationStatus: "confirmed" } };
+    },
+  };
+  const sig = await sendRawUntilConfirmed(
+    connection as never,
+    new Uint8Array([1, 2, 3]),
+    "11111111111111111111111111111111",
+    200,
+    "confirmed"
+  );
+  assert.equal(
+    sig,
+    "5QKym4ZZaZf1x5QhoRuvB9LydWEQSTeHfqNNWJbWb7ULP2qeoPKJJxnW8JzAD1YPHnfBwDeWqR5cVgbTtD5QdaiC"
+  );
+  assert.ok(sends >= 3, `expected resends while unconfirmed, got ${sends}`);
+}
+
+async function testSendRawThrowsWhenBlockHeightExceeded() {
+  const connection = {
+    async sendRawTransaction() {
+      return "V2qSzrNUuJXBN8YqyvWUrqmsmC9ogQZwZFRbPnzoiyj7Xo5SDYqRVVsm6ZiEWdkSaJKBmzsU2BAD2ZqHypPW1bF";
+    },
+    async getBlockHeight() {
+      return 201;
+    },
+    async getSignatureStatus() {
+      return { value: null };
+    },
+  };
+  await assert.rejects(
+    () =>
+      sendRawUntilConfirmed(
+        connection as never,
+        new Uint8Array([1]),
+        "11111111111111111111111111111111",
+        200,
+        "confirmed"
+      ),
+    (err: unknown) =>
+      err instanceof Error && /block height exceeded/.test(err.message)
+  );
+}
+
 /** Hit the real web3.js method — populate throws before any RPC. */
 async function testRealSimulateTransactionThrowsOnForeignLegacyTx() {
   const connection = new Connection("http://127.0.0.1:9");
@@ -200,6 +306,10 @@ const tests = [
   testForeignLegacyTxHitsNumRequiredSignatures,
   testVersionedSimulationBypassesInstanceof,
   testRealSimulateTransactionThrowsOnForeignLegacyTx,
+  testSetupLeadOutlivesExpiredCandidatesTx,
+  testBlockhashValidityAndExpiryDetection,
+  testSendRawResendsUntilConfirmed,
+  testSendRawThrowsWhenBlockHeightExceeded,
 ];
 
 async function main() {

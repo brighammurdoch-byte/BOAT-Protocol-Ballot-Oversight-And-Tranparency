@@ -1,7 +1,14 @@
 import { PublicKey } from "@solana/web3.js";
 
-/** Seconds reserved so Phantom can finish create + batched add-candidate approvals. */
-export const CANDIDATE_SETUP_LEAD_SEC = 120;
+/**
+ * Seconds reserved so Phantom can finish initialize + the candidates tx + one
+ * expired-blockhash retry before `add_outcome` is permanently rejected.
+ * A Devnet blockhash dies in ~60–90s; a dropped send that waits for
+ * `lastValidBlockHeight` burns that whole window. 120s (the old reserve)
+ * is shorter than init + one expiry, which is how Start-in-0 left orphan
+ * elections with zero candidates.
+ */
+export const CANDIDATE_SETUP_LEAD_SEC = 600;
 
 export function computeElectionWindow(opts: {
   startInMin: number;

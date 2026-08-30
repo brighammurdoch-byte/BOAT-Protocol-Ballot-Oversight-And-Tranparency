@@ -57,11 +57,19 @@ export {
   totalsWithAllCandidates,
 } from "./helpers";
 export {
+  MAX_SIGN_ATTEMPTS,
+  MIN_BLOCKHASH_SLOTS_REMAINING,
+  TX_RESEND_INTERVAL_MS,
   asVersionedForSimulation,
   assertMessageHeader,
+  blockhashStillValid,
   buildLegacyTransaction,
+  confirmationSatisfied,
   formatSimulationError,
+  isAlreadyProcessedError,
+  isExpiredBlockhashError,
   sendAndConfirmInstructions,
+  sendRawUntilConfirmed,
   simulateDispatchKind,
   waitForAccount,
 } from "./tx";
@@ -301,8 +309,11 @@ export async function addOutcomes(
   }
   const ixs = built.map((b) => b.ix);
   // Do not open Phantom until the prior create (and outcome_count) is visible.
+  // Then skip the extra pre-sign simulate so the signing blockhash is fetched
+  // immediately before the wallet prompt.
   await waitUntilSimulates(connection, wallet, ixs);
   const sig = await sendAndConfirmInstructions(connection, wallet, ixs, {
+    skipSimulate: true,
     waitFor: built.map((b) => b.outcome),
   });
   return {
@@ -352,13 +363,23 @@ export async function initializeElectionWithOutcomes(
   );
   if (added.signature) signatures.push(added.signature);
 
+  const program = getBoatProgram(connection, wallet, programId);
+  const onChain = await (program.account as any).election.fetch(election);
+  const have = Number(onChain.outcomeCount ?? onChain.outcome_count ?? 0);
+  if (have < labels.length) {
+    throw new Error(
+      `Election is on-chain with ${have}/${labels.length} candidates. ` +
+        `Click Create again with the same title to add the rest before voting opens.`
+    );
+  }
+
   return {
     signature: signatures[signatures.length - 1] ?? "",
     signatures,
     election,
     electionConfig,
     sbtMint,
-    candidateCount: labels.length,
+    candidateCount: have,
     reusedExisting,
   };
 }
