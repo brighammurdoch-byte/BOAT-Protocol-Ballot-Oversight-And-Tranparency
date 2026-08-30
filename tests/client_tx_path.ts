@@ -55,13 +55,21 @@ function testElectionWindow() {
   assert.equal(immediate.start, nowSec + CANDIDATE_SETUP_LEAD_SEC);
   assert.equal(immediate.end, immediate.start + 2 * 3600);
 
-  const later = computeElectionWindow({
+  const fiveMin = computeElectionWindow({
     startInMin: 5,
     durationHours: 2,
     nowMs,
     candidateCount: 3,
   });
-  assert.equal(later.start, nowSec + 5 * 60);
+  assert.equal(fiveMin.start, nowSec + CANDIDATE_SETUP_LEAD_SEC);
+
+  const later = computeElectionWindow({
+    startInMin: 15,
+    durationHours: 2,
+    nowMs,
+    candidateCount: 3,
+  });
+  assert.equal(later.start, nowSec + 15 * 60);
 
   const noCandidates = computeElectionWindow({
     startInMin: 0,
