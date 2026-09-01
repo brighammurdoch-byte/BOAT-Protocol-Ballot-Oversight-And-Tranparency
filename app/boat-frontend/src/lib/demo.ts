@@ -1,7 +1,90 @@
+import { Connection, PublicKey } from "@solana/web3.js";
+
+type WalletLike = {
+  publicKey: PublicKey;
+  signTransaction: (tx: any) => Promise<any>;
+  signAllTransactions: (txs: any[]) => Promise<any[]>;
+};
+
+/** Wallet / fetch abort — must never look like a silent form reset. */
+export function isAbortError(err: unknown): boolean {
+  if (err == null) return false;
+  const name =
+    typeof err === "object" && "name" in err ? String((err as { name: unknown }).name) : "";
+  const raw = err instanceof Error ? err.message : String(err);
+  const blob = `${name} ${raw}`.toLowerCase();
+  return (
+    name === "AbortError" ||
+    blob.includes("aborterror") ||
+    blob.includes("the user aborted") ||
+    blob.includes("signal is aborted") ||
+    blob.includes("operation was aborted") ||
+    blob.includes("request was aborted") ||
+    blob.includes("aborted without reason")
+  );
+}
+
+/**
+ * Only the Cast / change vote click may send. Radios must pass armed=false.
+ */
+export function canSendVoteTx(armed: boolean, selected: number | null): boolean {
+  return armed === true && selected !== null;
+}
+
+/** Connection that is not torn down when a React provider remounts. */
+export function durableConnection(connection: Connection): Connection {
+  return new Connection(connection.rpcEndpoint, {
+    commitment: "confirmed",
+    confirmTransactionInitialTimeout: 60_000,
+  });
+}
+
+/** Sign through the adapter instance so a remount cannot abort the wallet request. */
+export function durableWallet(wallet: any): WalletLike {
+  if (!wallet?.publicKey) {
+    throw new Error("Connect a wallet first.");
+  }
+  const adapter = wallet.wallet?.adapter;
+  const publicKey = wallet.publicKey;
+  return {
+    publicKey,
+    signTransaction: async (tx) => {
+      const fn = adapter?.signTransaction?.bind(adapter) ?? wallet.signTransaction;
+      if (!fn) throw new Error("Connect a wallet first.");
+      return fn(tx);
+    },
+    signAllTransactions: async (txs) => {
+      const fn =
+        adapter?.signAllTransactions?.bind(adapter) ?? wallet.signAllTransactions;
+      if (!fn) throw new Error("Connect a wallet first.");
+      return fn(txs);
+    },
+  };
+}
+
+/** Fetches must not be able to open Phantom. */
+export function readOnlyWallet(publicKey?: PublicKey | null): WalletLike {
+  return {
+    publicKey: publicKey ?? PublicKey.default,
+    signTransaction: async () => {
+      throw new Error("Read-only account fetch must not open the wallet.");
+    },
+    signAllTransactions: async () => {
+      throw new Error("Read-only account fetch must not open the wallet.");
+    },
+  };
+}
+
 /** Map common Solana / Anchor errors to demo-friendly copy. */
 export function friendlyError(err: unknown): string {
+  if (isAbortError(err)) {
+    return "The request was interrupted before a transaction landed. Nothing was silently reset — click Create again (same title) if the election PDA is still empty.";
+  }
   const raw = err instanceof Error ? err.message : String(err);
   const lower = raw.toLowerCase();
+  if (!raw.trim()) {
+    return "Create/vote failed with no error details. Check that Phantom is on Devnet and try again — the form was not submitted.";
+  }
   if (lower.includes("connect") && lower.includes("wallet")) {
     return "Connect a Solana wallet (Phantom or Solflare) first.";
   }

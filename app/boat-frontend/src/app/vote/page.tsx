@@ -14,9 +14,11 @@ import {
   fetchPrivateConfig,
 } from "@boat/sdk";
 import {
+  canSendVoteTx,
   countdownLabel,
   formatLocal,
   friendlyError,
+  readOnlyWallet,
   readPdaQuery,
 } from "../../lib/demo";
 import { buildPrivateBallotPackage } from "../../lib/zkBallot";
@@ -43,6 +45,9 @@ export default function VotePage() {
   const [err, setErr] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const sending = useRef(false);
+  /** Set only by the Cast / change vote button. Radios must never arm this. */
+  const voteArmed = useRef(false);
+  const voterKey = wallet.publicKey?.toBase58() ?? "";
 
   useEffect(() => {
     const fromQuery = readPdaQuery();
@@ -72,11 +77,8 @@ export default function VotePage() {
       if (!wallet.publicKey) {
         throw new Error("Connect a wallet first.");
       }
-      const { election: e } = await fetchElection(
-        connection,
-        election,
-        wallet as any
-      );
+      const reader = readOnlyWallet(wallet.publicKey);
+      const { election: e } = await fetchElection(connection, election, reader);
       const start = Number(e.startTime ?? e.start_time);
       const end = Number(e.endTime ?? e.end_time);
       setWindowInfo({
@@ -88,13 +90,13 @@ export default function VotePage() {
         connection,
         election,
         Number(e.outcomeCount ?? e.outcome_count),
-        wallet as any
+        reader
       );
       setOutcomes(list.map((o) => ({ index: o.index, label: o.label })));
       const { data: priv } = await fetchPrivateConfig(
         connection,
         election,
-        wallet as any
+        reader
       );
       const enabled = Boolean(priv?.enabled);
       setPrivateMode(enabled);
@@ -112,13 +114,15 @@ export default function VotePage() {
   }, [connection, election, wallet]);
 
   useEffect(() => {
-    if (election && wallet.publicKey) {
+    if (election && voterKey) {
       void load();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [election, wallet.publicKey]);
+  }, [election, voterKey]);
 
   const submit = useCallback(async () => {
+    if (!canSendVoteTx(voteArmed.current, selected)) return;
+    voteArmed.current = false;
     if (sending.current) return;
     sending.current = true;
     setErr(null);
@@ -265,36 +269,29 @@ export default function VotePage() {
         </div>
       )}
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-        }}
-      >
+      <div>
         {outcomes.length > 0 && (
-          <fieldset className="mb-6 border-0 p-0">
-            <legend className="text-sm text-stone-600 mb-2">
+          <div className="mb-6">
+            <p className="text-sm text-stone-600 mb-2">
               Choose a candidate, then click Cast / change vote
-            </legend>
+            </p>
             <ul className="space-y-2">
               {outcomes.map((o) => (
                 <li key={o.index}>
                   <label className="flex items-center gap-3 cursor-pointer border border-transparent hover:border-stone-300 px-2 py-2">
                     <input
                       type="radio"
-                      name="candidate"
+                      name="boat-candidate"
                       value={String(o.index)}
                       checked={selected === o.index}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        setSelected(o.index);
-                      }}
+                      onChange={() => setSelected(o.index)}
                     />
                     <span>{o.label}</span>
                   </label>
                 </li>
               ))}
             </ul>
-          </fieldset>
+          </div>
         )}
 
         <button
@@ -303,15 +300,16 @@ export default function VotePage() {
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            voteArmed.current = true;
             void submit();
           }}
           className="bg-stone-900 text-white px-4 py-2 disabled:opacity-40"
         >
           {privateMode ? "Cast private ballot" : "Cast / change vote"}
         </button>
-      </form>
+      </div>
 
-      {err && <p className="text-red-700 mt-4">{err}</p>}
+      {err ? <p className="text-red-700 mt-4">{err}</p> : null}
       {receipt && (
         <p className="mt-4 text-sm">
           Receipt:{" "}
