@@ -14,6 +14,7 @@ import {
   computeElectionWindow,
   parseCandidateLabels,
   parseVoterKeys,
+  pdaElection,
 } from "@boat/sdk";
 import {
   copyText,
@@ -147,6 +148,15 @@ export default function AdminPage() {
         endTime,
       });
     } catch (e: unknown) {
+      if (wallet.publicKey && title.trim()) {
+        try {
+          const [pda] = pdaElection(wallet.publicKey, title.trim());
+          const info = await connection.getAccountInfo(pda, "confirmed");
+          if (info) setElectionPda(pda.toBase58());
+        } catch {
+          // Keep the create error; do not invent a PDA that is not on-chain.
+        }
+      }
       setErr(friendlyError(e));
     } finally {
       sending.current = false;

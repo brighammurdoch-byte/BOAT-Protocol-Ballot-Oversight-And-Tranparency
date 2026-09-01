@@ -8,14 +8,17 @@ import {
 } from "@solana/web3.js";
 import type { AnchorWalletLike } from "./wallet";
 
-/** Slots that must remain after Phantom returns or we rebuild with a fresh hash. */
+/** Slots that must remain on a *fresh* RPC hash before we hand it to Phantom. */
 export const MIN_BLOCKHASH_SLOTS_REMAINING = 20;
 
 /** How often to rebroadcast the same signed bytes while the hash is still valid. */
-export const TX_RESEND_INTERVAL_MS = 1_500;
+export const TX_RESEND_INTERVAL_MS = 400;
 
-/** Fresh blockhash + Phantom approve attempts for one instruction set. */
-export const MAX_SIGN_ATTEMPTS = 3;
+/**
+ * One signing prompt, plus one rebuild if that hash is actually dead.
+ * Do not stack three identical Phantom Confirms on a single Create click.
+ */
+export const MAX_SIGN_ATTEMPTS = 2;
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -222,9 +225,36 @@ function serializeSigned(signed: { serialize?: (opts?: unknown) => Uint8Array | 
   return raw instanceof Uint8Array ? raw : Uint8Array.from(raw);
 }
 
+/** Legacy `recentBlockhash` or VersionedTransaction `message.recentBlockhash`. */
+export function extractRecentBlockhash(signed: unknown): string | null {
+  if (!signed || typeof signed !== "object") return null;
+  const s = signed as {
+    recentBlockhash?: unknown;
+    message?: { recentBlockhash?: unknown };
+  };
+  if (typeof s.recentBlockhash === "string" && s.recentBlockhash.length > 0) {
+    return s.recentBlockhash;
+  }
+  if (
+    typeof s.message?.recentBlockhash === "string" &&
+    s.message.recentBlockhash.length > 0
+  ) {
+    return s.message.recentBlockhash;
+  }
+  return null;
+}
+
+function expiryError(signature: string | null): Error {
+  return new Error(
+    signature
+      ? `Signature ${signature} has expired: block height exceeded.`
+      : "Transaction blockhash expired: block height exceeded."
+  );
+}
+
 /**
  * Rebroadcast the same signed bytes until confirmed or the hash expires.
- * `confirmTransaction` only polls — Devnet routinely drops the first send.
+ * Never opens the wallet. Devnet routinely drops the first send.
  */
 export async function sendRawUntilConfirmed(
   connection: Connection,
@@ -235,7 +265,7 @@ export async function sendRawUntilConfirmed(
 ): Promise<string> {
   let signature: string | null = null;
 
-  const sendOnce = async (): Promise<string> => {
+  const sendOnce = async (): Promise<string | null> => {
     try {
       const sig = await connection.sendRawTransaction(raw, {
         skipPreflight: true,
@@ -246,33 +276,38 @@ export async function sendRawUntilConfirmed(
     } catch (e) {
       if (isAlreadyProcessedError(e) && signature) return signature;
       if (isExpiredBlockhashError(e)) {
-        throw new Error(
-          signature
-            ? `Signature ${signature} has expired: block height exceeded.`
-            : "Transaction blockhash expired: block height exceeded."
-        );
+        throw expiryError(signature);
       }
-      if (signature) return signature;
-      throw e;
+      // Transient RPC (429 / drop / fetch) — keep the same bytes in play.
+      return signature;
     }
   };
 
-  signature = await sendOnce();
+  const statusOf = async (sig: string) =>
+    connection.getSignatureStatus(sig, { searchTransactionHistory: true });
+
+  try {
+    signature = await sendOnce();
+  } catch (e) {
+    if (isExpiredBlockhashError(e)) throw e;
+  }
 
   while (true) {
     const height = await connection.getBlockHeight(commitment);
-    if (!blockhashStillValid(height, lastValidBlockHeight)) {
-      throw new Error(
-        `Signature ${signature} has expired: block height exceeded.`
-      );
+    const hashAlive = blockhashStillValid(height, lastValidBlockHeight);
+
+    if (signature) {
+      const status = await statusOf(signature);
+      if (status.value?.err) {
+        throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
+      }
+      if (confirmationSatisfied(status.value?.confirmationStatus, commitment)) {
+        return signature;
+      }
     }
 
-    const status = await connection.getSignatureStatus(signature);
-    if (status.value?.err) {
-      throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
-    }
-    if (confirmationSatisfied(status.value?.confirmationStatus, commitment)) {
-      return signature;
+    if (!hashAlive) {
+      throw expiryError(signature);
     }
 
     await sendOnce();
@@ -328,9 +363,10 @@ export async function waitUntilSimulates(
 
 /**
  * Simulate on our RPC (optional), then:
- *   1. fetch a fresh blockhash immediately before Phantom
- *   2. drop the signed bytes if the hash is already dead after approve
- *   3. rebroadcast until confirmed, or rebuild + re-sign if it expires
+ *   1. fetch a fresh blockhash immediately before Phantom (no extra RPC in between)
+ *   2. send the signed bytes even if few slots remain — do not discard them
+ *   3. rebroadcast those same bytes until confirmed, or the hash is actually dead
+ *   4. only then fetch a new hash and re-sign (one extra prompt, not a stack)
  *
  * Callers must not queue a dependent tx until this resolves.
  */
@@ -363,48 +399,23 @@ export async function sendAndConfirmInstructions(
       return "";
     }
 
+    // Last RPC before the wallet prompt — do not getBlockHeight here.
     const tx = await latestTx(connection, wallet, ixs, commitment);
     const blockhash = tx.recentBlockhash!;
     const lastValidBlockHeight = tx.lastValidBlockHeight!;
-
-    const heightBefore = await connection.getBlockHeight(commitment);
-    if (
-      !blockhashStillValid(
-        heightBefore,
-        lastValidBlockHeight,
-        MIN_BLOCKHASH_SLOTS_REMAINING
-      )
-    ) {
-      lastErr = new Error("Latest blockhash was already near expiry; fetching another.");
-      continue;
-    }
 
     const signed = await wallet.signTransaction(tx);
     if (!signed) {
       throw new Error("Wallet returned an empty signed transaction.");
     }
 
-    const usedBlockhash =
-      typeof signed.recentBlockhash === "string" && signed.recentBlockhash
-        ? signed.recentBlockhash
-        : blockhash;
-    const usedLastValid =
-      typeof signed.lastValidBlockHeight === "number"
-        ? signed.lastValidBlockHeight
-        : lastValidBlockHeight;
-
-    const heightAfter = await connection.getBlockHeight(commitment);
-    if (
-      !blockhashStillValid(
-        heightAfter,
-        usedLastValid,
-        MIN_BLOCKHASH_SLOTS_REMAINING
-      )
-    ) {
-      lastErr = new Error(
-        "Transaction blockhash expired while waiting for wallet approval: block height exceeded."
-      );
-      continue;
+    const usedBlockhash = extractRecentBlockhash(signed) ?? blockhash;
+    let usedLastValid = lastValidBlockHeight;
+    if (usedBlockhash !== blockhash) {
+      // Phantom / wallet-standard may refresh the message hash on approve.
+      // lastValidBlockHeight is not on the wire — do not keep our stale value.
+      const latest = await connection.getLatestBlockhash(commitment);
+      usedLastValid = latest.lastValidBlockHeight;
     }
 
     const raw = serializeSigned(signed);

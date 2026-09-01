@@ -65,6 +65,7 @@ export {
   blockhashStillValid,
   buildLegacyTransaction,
   confirmationSatisfied,
+  extractRecentBlockhash,
   formatSimulationError,
   isAlreadyProcessedError,
   isExpiredBlockhashError,
@@ -219,6 +220,7 @@ export async function initializeElection(
     .instruction();
   const sig = await sendAndConfirmInstructions(connection, wallet, [ix], {
     waitFor: [election],
+    skipSimulate: true,
   });
   return { signature: sig, election, electionConfig, sbtMint };
 }
@@ -350,8 +352,14 @@ export async function initializeElectionWithOutcomes(
   let reusedExisting = Boolean(existing);
 
   if (!existing) {
-    const created = await initializeElection(connection, wallet, args, programId);
-    signatures.push(created.signature);
+    try {
+      const created = await initializeElection(connection, wallet, args, programId);
+      signatures.push(created.signature);
+    } catch (e) {
+      const landed = await connection.getAccountInfo(election, "confirmed");
+      if (!landed) throw e;
+      reusedExisting = true;
+    }
   }
 
   const added = await addOutcomes(

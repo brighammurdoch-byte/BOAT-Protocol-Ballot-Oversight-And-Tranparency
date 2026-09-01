@@ -9,12 +9,14 @@ import {
 import {
   CANDIDATE_SETUP_LEAD_SEC,
   DEFAULT_BOAT_PROGRAM_ID,
+  MAX_SIGN_ATTEMPTS,
   asVersionedForSimulation,
   assertMessageHeader,
   blockhashStillValid,
   buildLegacyTransaction,
   computeElectionWindow,
   confirmationSatisfied,
+  extractRecentBlockhash,
   formatSimulationError,
   isAlreadyProcessedError,
   isExpiredBlockhashError,
@@ -22,6 +24,7 @@ import {
   parseVoterKeys,
   pdaOutcome,
   remainingCandidateLabels,
+  sendAndConfirmInstructions,
   sendRawUntilConfirmed,
   simulateDispatchKind,
   totalsWithAllCandidates,
@@ -257,6 +260,38 @@ async function testSendRawResendsUntilConfirmed() {
   assert.ok(sends >= 3, `expected resends while unconfirmed, got ${sends}`);
 }
 
+async function testSendRawRetriesWhenFirstSendThrows() {
+  let sends = 0;
+  let polls = 0;
+  const connection = {
+    async sendRawTransaction() {
+      sends += 1;
+      if (sends === 1) throw new Error("429 Too Many Requests");
+      return "5QKym4ZZaZf1x5QhoRuvB9LydWEQSTeHfqNNWJbWb7ULP2qeoPKJJxnW8JzAD1YPHnfBwDeWqR5cVgbTtD5QdaiC";
+    },
+    async getBlockHeight() {
+      return 100;
+    },
+    async getSignatureStatus() {
+      polls += 1;
+      if (polls < 2) return { value: null };
+      return { value: { err: null, confirmationStatus: "confirmed" } };
+    },
+  };
+  const sig = await sendRawUntilConfirmed(
+    connection as never,
+    new Uint8Array([1]),
+    "11111111111111111111111111111111",
+    200,
+    "confirmed"
+  );
+  assert.equal(
+    sig,
+    "5QKym4ZZaZf1x5QhoRuvB9LydWEQSTeHfqNNWJbWb7ULP2qeoPKJJxnW8JzAD1YPHnfBwDeWqR5cVgbTtD5QdaiC"
+  );
+  assert.ok(sends >= 2, `expected retry after first send throw, got ${sends}`);
+}
+
 async function testSendRawThrowsWhenBlockHeightExceeded() {
   const connection = {
     async sendRawTransaction() {
@@ -281,6 +316,269 @@ async function testSendRawThrowsWhenBlockHeightExceeded() {
     (err: unknown) =>
       err instanceof Error && /block height exceeded/.test(err.message)
   );
+}
+
+function dummyIx() {
+  const payer = Keypair.generate();
+  return SystemProgram.transfer({
+    fromPubkey: payer.publicKey,
+    toPubkey: payer.publicKey,
+    lamports: 1,
+  });
+}
+
+function mockWallet(onSign: (tx: Transaction) => void = () => undefined) {
+  const keypair = Keypair.generate();
+  return {
+    publicKey: keypair.publicKey,
+    signTransaction: async (tx: Transaction) => {
+      onSign(tx);
+      return {
+        recentBlockhash: tx.recentBlockhash,
+        lastValidBlockHeight: tx.lastValidBlockHeight,
+        serialize: () => new Uint8Array([1, 2, 3]),
+      };
+    },
+    signAllTransactions: async (txs: Transaction[]) => txs,
+  };
+}
+
+const CONFIRMED_SIG =
+  "5QKym4ZZaZf1x5QhoRuvB9LydWEQSTeHfqNNWJbWb7ULP2qeoPKJJxnW8JzAD1YPHnfBwDeWqR5cVgbTtD5QdaiC";
+
+function testExtractRecentBlockhashReadsLegacyAndVersioned() {
+  assert.equal(
+    extractRecentBlockhash({ recentBlockhash: "legacyhash11111111111111111111111" }),
+    "legacyhash11111111111111111111111"
+  );
+  assert.equal(
+    extractRecentBlockhash({
+      message: { recentBlockhash: "versionedhash111111111111111111111" },
+    }),
+    "versionedhash111111111111111111111"
+  );
+  assert.equal(extractRecentBlockhash({}), null);
+}
+
+function testSignAttemptsIsNotAConfirmStack() {
+  assert.equal(MAX_SIGN_ATTEMPTS, 2);
+}
+
+/** Dropped first send must rebroadcast the same bytes — no second Phantom prompt. */
+async function testDroppedSendDoesNotResign() {
+  let signs = 0;
+  let sends = 0;
+  let polls = 0;
+  const wallet = mockWallet(() => {
+    signs += 1;
+  });
+  const connection = {
+    async getLatestBlockhash() {
+      return {
+        blockhash: "11111111111111111111111111111111",
+        lastValidBlockHeight: 200,
+      };
+    },
+    async getBlockHeight() {
+      return 100;
+    },
+    async sendRawTransaction() {
+      sends += 1;
+      return CONFIRMED_SIG;
+    },
+    async getSignatureStatus() {
+      polls += 1;
+      if (polls < 3) return { value: null };
+      return { value: { err: null, confirmationStatus: "confirmed" } };
+    },
+    async getMultipleAccountsInfo() {
+      return [null];
+    },
+  };
+  const sig = await sendAndConfirmInstructions(
+    connection as never,
+    wallet,
+    [dummyIx()],
+    { skipSimulate: true }
+  );
+  assert.equal(sig, CONFIRMED_SIG);
+  assert.equal(signs, 1, `rebroadcast must not re-open Phantom, got ${signs} signs`);
+  assert.ok(sends >= 3, `expected silent resends, got ${sends}`);
+}
+
+/**
+ * Live hole: after Phantom returns with <20 slots left, PR #4 discarded the
+ * signed bytes and opened another Confirm. Those bytes must still be sent.
+ */
+async function testNearExpiryAfterSignStillSends() {
+  let signs = 0;
+  let sends = 0;
+  const wallet = mockWallet(() => {
+    signs += 1;
+  });
+  const connection = {
+    async getLatestBlockhash() {
+      return {
+        blockhash: "11111111111111111111111111111111",
+        lastValidBlockHeight: 200,
+      };
+    },
+    async getBlockHeight() {
+      // 10 slots left — below MIN_BLOCKHASH_SLOTS_REMAINING (20).
+      return 190;
+    },
+    async sendRawTransaction() {
+      sends += 1;
+      return CONFIRMED_SIG;
+    },
+    async getSignatureStatus() {
+      return { value: { err: null, confirmationStatus: "confirmed" } };
+    },
+    async getMultipleAccountsInfo() {
+      return [null];
+    },
+  };
+  const sig = await sendAndConfirmInstructions(
+    connection as never,
+    wallet,
+    [dummyIx()],
+    { skipSimulate: true }
+  );
+  assert.equal(sig, CONFIRMED_SIG);
+  assert.equal(signs, 1);
+  assert.ok(sends >= 1, "near-expiry signed bytes must be sent, not discarded");
+}
+
+/** Hash actually dead after send → one rebuild + one new prompt, not three. */
+async function testResignOnceAfterHashDies() {
+  let signs = 0;
+  let hashFetch = 0;
+  const wallet = mockWallet(() => {
+    signs += 1;
+  });
+  const connection = {
+    async getLatestBlockhash() {
+      hashFetch += 1;
+      return {
+        blockhash: `hash${hashFetch}11111111111111111111111111`.slice(0, 32),
+        lastValidBlockHeight: signs === 0 ? 200 : 400,
+      };
+    },
+    async getBlockHeight() {
+      return signs < 2 ? 201 : 100;
+    },
+    async sendRawTransaction() {
+      return CONFIRMED_SIG;
+    },
+    async getSignatureStatus() {
+      if (signs < 2) return { value: null };
+      return { value: { err: null, confirmationStatus: "confirmed" } };
+    },
+    async getMultipleAccountsInfo() {
+      return [null];
+    },
+  };
+  const sig = await sendAndConfirmInstructions(
+    connection as never,
+    wallet,
+    [dummyIx()],
+    { skipSimulate: true }
+  );
+  assert.equal(sig, CONFIRMED_SIG);
+  assert.equal(signs, 2, `expected one re-sign after expiry, got ${signs}`);
+}
+
+/** Signing blockhash must be the last RPC before Phantom — no getBlockHeight gap. */
+async function testBlockhashIsLastRpcBeforeSign() {
+  const events: string[] = [];
+  const wallet = mockWallet(() => {
+    events.push("sign");
+  });
+  const connection = {
+    async getLatestBlockhash() {
+      events.push("hash");
+      return {
+        blockhash: "11111111111111111111111111111111",
+        lastValidBlockHeight: 200,
+      };
+    },
+    async getBlockHeight() {
+      events.push("height");
+      return 100;
+    },
+    async sendRawTransaction() {
+      events.push("send");
+      return CONFIRMED_SIG;
+    },
+    async getSignatureStatus() {
+      return { value: { err: null, confirmationStatus: "confirmed" } };
+    },
+    async getMultipleAccountsInfo() {
+      return [null];
+    },
+  };
+  await sendAndConfirmInstructions(connection as never, wallet, [dummyIx()], {
+    skipSimulate: true,
+  });
+  const signAt = events.indexOf("sign");
+  assert.ok(signAt > 0, "wallet must be asked to sign");
+  assert.equal(events[signAt - 1], "hash");
+  assert.equal(events.slice(0, signAt).includes("height"), false);
+}
+
+/** Wallet refreshed the message hash — do not expire using our stale lastValid. */
+async function testWalletReplacedBlockhashDoesNotUseStaleLastValid() {
+  let signs = 0;
+  let latestCalls = 0;
+  const keypair = Keypair.generate();
+  const wallet = {
+    publicKey: keypair.publicKey,
+    signTransaction: async () => {
+      signs += 1;
+      return {
+        recentBlockhash: "PhantomReplacedHash1111111111111",
+        lastValidBlockHeight: 200,
+        serialize: () => new Uint8Array([9]),
+      };
+    },
+    signAllTransactions: async (txs: Transaction[]) => txs,
+  };
+  const connection = {
+    async getLatestBlockhash() {
+      latestCalls += 1;
+      if (latestCalls === 1) {
+        return {
+          blockhash: "OriginalHash11111111111111111111",
+          lastValidBlockHeight: 200,
+        };
+      }
+      return {
+        blockhash: "PostSignLatest111111111111111111",
+        lastValidBlockHeight: 350,
+      };
+    },
+    async getBlockHeight() {
+      return 201;
+    },
+    async sendRawTransaction() {
+      return CONFIRMED_SIG;
+    },
+    async getSignatureStatus() {
+      return { value: { err: null, confirmationStatus: "confirmed" } };
+    },
+    async getMultipleAccountsInfo() {
+      return [null];
+    },
+  };
+  const sig = await sendAndConfirmInstructions(
+    connection as never,
+    wallet,
+    [dummyIx()],
+    { skipSimulate: true }
+  );
+  assert.equal(sig, CONFIRMED_SIG);
+  assert.equal(signs, 1);
+  assert.ok(latestCalls >= 2, "must refresh lastValid after Phantom replaces the hash");
 }
 
 /** Hit the real web3.js method — populate throws before any RPC. */
@@ -317,7 +615,15 @@ const tests = [
   testSetupLeadOutlivesExpiredCandidatesTx,
   testBlockhashValidityAndExpiryDetection,
   testSendRawResendsUntilConfirmed,
+  testSendRawRetriesWhenFirstSendThrows,
   testSendRawThrowsWhenBlockHeightExceeded,
+  testExtractRecentBlockhashReadsLegacyAndVersioned,
+  testSignAttemptsIsNotAConfirmStack,
+  testDroppedSendDoesNotResign,
+  testNearExpiryAfterSignStillSends,
+  testResignOnceAfterHashDies,
+  testBlockhashIsLastRpcBeforeSign,
+  testWalletReplacedBlockhashDoesNotUseStaleLastValid,
 ];
 
 async function main() {
