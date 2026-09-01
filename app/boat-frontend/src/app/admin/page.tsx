@@ -390,7 +390,7 @@ export default function AdminPage() {
         </label>
         <button
           type="button"
-          disabled={!canWrite || busy || now == null}
+          disabled={busy || now == null}
           onClick={() => void onCreate()}
           className="bg-teal-800 text-white px-4 py-2 disabled:opacity-40"
         >
