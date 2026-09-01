@@ -53,7 +53,7 @@ export function friendlyError(err: unknown): string {
     lower.includes("block height exceeded") ||
     (lower.includes("expired") && lower.includes("block"))
   ) {
-    return "A signed transaction expired before Devnet accepted it. The app refreshes the blockhash and resends — click Create again with the same title if candidates are still missing.";
+    return "A signed transaction expired before Devnet accepted it. The app rebroadcasts the same signature until the blockhash is dead, then asks the wallet once more. Click Create again with the same title if the election PDA is filled but candidates are still missing.";
   }
   if (
     lower.includes("blockhash not found") ||
