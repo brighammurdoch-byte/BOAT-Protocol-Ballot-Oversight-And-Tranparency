@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BoatWalletButton from "../../components/BoatWalletButton";
@@ -19,6 +19,8 @@ import {
 import {
   copyText,
   countdownLabel,
+  durableConnection,
+  durableWallet,
   explorerWalletUrl,
   formatLocal,
   friendlyError,
@@ -34,34 +36,84 @@ type Checklist = {
   endTime?: number;
 };
 
+/**
+ * Survives a React remount (wallet provider / Next client-page abort).
+ * Module memory is per-tab — not sessionStorage — so overlapping QA tabs
+ * do not overwrite each other's title.
+ */
+type AdminLive = {
+  title: string;
+  startInMin: number;
+  durationHours: number;
+  candidates: string;
+  electionPda: string;
+  log: string;
+  err: string | null;
+  busy: boolean;
+  sending: boolean;
+  checklist: Checklist;
+};
+
+function initialAdminLive(): AdminLive {
+  return {
+    title: "USU Officers Election",
+    startInMin: 5,
+    durationHours: 24,
+    candidates: "Alice\nBob\nCarol",
+    electionPda: "",
+    log: "",
+    err: null,
+    busy: false,
+    sending: false,
+    checklist: { created: false, candidates: 0, registered: 0 },
+  };
+}
+
+let adminLive = initialAdminLive();
+const adminLiveListeners = new Set<() => void>();
+
+function subscribeAdminLive(onStoreChange: () => void) {
+  adminLiveListeners.add(onStoreChange);
+  return () => adminLiveListeners.delete(onStoreChange);
+}
+
+function getAdminLive() {
+  return adminLive;
+}
+
+function patchAdminLive(partial: Partial<AdminLive>) {
+  adminLive = { ...adminLive, ...partial };
+  adminLiveListeners.forEach((fn) => fn());
+}
+
 export default function AdminPage() {
   const { connection } = useConnection();
   const wallet = useWallet();
-  const [title, setTitle] = useState("USU Officers Election");
-  const [startInMin, setStartInMin] = useState(5);
-  const [durationHours, setDurationHours] = useState(24);
-  const [candidates, setCandidates] = useState("Alice\nBob\nCarol");
+  const live = useSyncExternalStore(subscribeAdminLive, getAdminLive, getAdminLive);
+  const {
+    title,
+    startInMin,
+    durationHours,
+    candidates,
+    electionPda,
+    log,
+    err,
+    busy,
+    checklist,
+  } = live;
   const [voters, setVoters] = useState("");
-  const [electionPda, setElectionPda] = useState("");
   const [privateSecrets, setPrivateSecrets] = useState(
     "usu-zk-voter-0\nusu-zk-voter-1\nusu-zk-voter-2\nusu-zk-voter-3\nusu-zk-voter-4"
   );
-  const [log, setLog] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [checklist, setChecklist] = useState<Checklist>({
-    created: false,
-    candidates: 0,
-    registered: 0,
-  });
   const [now, setNow] = useState<number | null>(null);
   const [programMissing, setProgramMissing] = useState(false);
-  const sending = useRef(false);
 
   useEffect(() => {
     const fromQuery = readPdaQuery();
-    if (fromQuery) setElectionPda(fromQuery);
+    if (fromQuery && !getAdminLive().electionPda) {
+      patchAdminLive({ electionPda: fromQuery });
+    }
   }, []);
 
   useEffect(() => {
@@ -101,34 +153,34 @@ export default function AdminPage() {
     [wallet.publicKey, wallet.signTransaction]
   );
 
-  const append = (line: string) => setLog((prev) => `${prev}${line}\n`);
+  const append = (line: string) => {
+    patchAdminLive({ log: `${getAdminLive().log}${line}\n` });
+  };
 
   const onCreate = async () => {
-    if (sending.current) return;
-    sending.current = true;
-    setErr(null);
-    setBusy(true);
+    const current = getAdminLive();
+    if (current.sending) return;
+    patchAdminLive({ sending: true, busy: true, err: null });
+    const conn = durableConnection(connection);
     try {
-      if (!wallet.publicKey || !wallet.signTransaction) {
-        throw new Error("Connect a wallet first.");
-      }
-      const labels = parseCandidateLabels(candidates);
+      const w = durableWallet(wallet);
+      const labels = parseCandidateLabels(current.candidates);
       if (labels.length === 0) {
         throw new Error("Add at least one candidate (one per line).");
       }
       const { start: startTime, end: endTime } = computeElectionWindow({
-        startInMin,
-        durationHours,
+        startInMin: current.startInMin,
+        durationHours: current.durationHours,
         candidateCount: labels.length,
       });
-      const res = await initializeElectionWithOutcomes(connection, wallet as any, {
-        title: title.trim(),
+      const res = await initializeElectionWithOutcomes(conn, w, {
+        title: current.title.trim(),
         startTime,
         endTime,
         candidateLabels: labels,
       });
       const pda = res.election.toBase58();
-      setElectionPda(pda);
+      patchAdminLive({ electionPda: pda });
       if (res.reusedExisting) {
         append(`Election already existed ${pda} — added any missing candidates.`);
       } else {
@@ -140,52 +192,48 @@ export default function AdminPage() {
         append(`Tx: ${explorerTxUrl(sig, "devnet")}`);
       }
       append(`Candidates on-chain: ${labels.join(", ")}`);
-      setChecklist({
-        created: true,
-        candidates: labels.length,
-        registered: 0,
-        startTime,
-        endTime,
+      patchAdminLive({
+        checklist: {
+          created: true,
+          candidates: labels.length,
+          registered: getAdminLive().checklist.registered,
+          startTime,
+          endTime,
+        },
       });
     } catch (e: unknown) {
-      if (wallet.publicKey && title.trim()) {
+      // Show the error before any extra RPC. PR #5 awaited getAccountInfo
+      // first; an abort/remount there swallowed the banner and reset the form.
+      patchAdminLive({ err: friendlyError(e) });
+      const titleNow = getAdminLive().title.trim();
+      if (wallet.publicKey && titleNow) {
         try {
-          const [pda] = pdaElection(wallet.publicKey, title.trim());
-          const info = await connection.getAccountInfo(pda, "confirmed");
-          if (info) setElectionPda(pda.toBase58());
+          const [pda] = pdaElection(wallet.publicKey, titleNow);
+          const info = await conn.getAccountInfo(pda, "confirmed");
+          if (info) patchAdminLive({ electionPda: pda.toBase58() });
         } catch {
           // Keep the create error; do not invent a PDA that is not on-chain.
         }
       }
-      setErr(friendlyError(e));
     } finally {
-      sending.current = false;
-      setBusy(false);
+      patchAdminLive({ sending: false, busy: false });
     }
   };
 
   const onRegister = async () => {
-    if (sending.current) return;
-    sending.current = true;
-    setErr(null);
-    setBusy(true);
+    const current = getAdminLive();
+    if (current.sending) return;
+    patchAdminLive({ sending: true, busy: true, err: null });
     try {
-      if (!wallet.publicKey || !wallet.signTransaction) {
-        throw new Error("Connect a wallet first.");
-      }
-      if (!electionPda.trim()) throw new Error("Election PDA required.");
-      const election = new PublicKey(electionPda.trim());
+      const w = durableWallet(wallet);
+      const conn = durableConnection(connection);
+      if (!current.electionPda.trim()) throw new Error("Election PDA required.");
+      const election = new PublicKey(current.electionPda.trim());
       const keys = parseVoterKeys(voters);
       if (keys.length === 0) throw new Error("Paste at least one voter pubkey.");
       let n = 0;
       for (const voter of keys) {
-        const r = await registerVoter(
-          connection,
-          wallet as any,
-          election,
-          voter,
-          BigInt(1)
-        );
+        const r = await registerVoter(conn, w, election, voter, BigInt(1));
         if (r.skipped) {
           append(`Already registered ${voter.toBase58()} — skipped extra prompt.`);
           continue;
@@ -194,23 +242,22 @@ export default function AdminPage() {
         append(`  ${explorerTxUrl(r.signature, "devnet")}`);
         n += 1;
       }
-      setChecklist((c) => ({ ...c, registered: c.registered + n }));
+      const c = getAdminLive().checklist;
+      patchAdminLive({ checklist: { ...c, registered: c.registered + n } });
     } catch (e: unknown) {
-      setErr(friendlyError(e));
+      patchAdminLive({ err: friendlyError(e) });
     } finally {
-      sending.current = false;
-      setBusy(false);
+      patchAdminLive({ sending: false, busy: false });
     }
   };
 
   const onEnablePrivate = async () => {
-    setErr(null);
-    setBusy(true);
+    patchAdminLive({ err: null, busy: true });
     try {
-      if (!wallet.publicKey || !wallet.signTransaction) {
-        throw new Error("Connect a wallet first.");
-      }
-      if (!electionPda.trim()) throw new Error("Election PDA required.");
+      const w = durableWallet(wallet);
+      const conn = durableConnection(connection);
+      const pda = getAdminLive().electionPda;
+      if (!pda.trim()) throw new Error("Election PDA required.");
       const secrets = privateSecrets
         .split(/\r?\n/)
         .map((s) => s.trim())
@@ -219,21 +266,15 @@ export default function AdminPage() {
         throw new Error("Paste electorate secrets (one per line).");
       }
       const root = merkleRootFromSecrets(secrets);
-      const election = new PublicKey(electionPda.trim());
-      const r = await enablePrivateBallots(
-        connection,
-        wallet as any,
-        election,
-        root,
-        true
-      );
+      const election = new PublicKey(pda.trim());
+      const r = await enablePrivateBallots(conn, w, election, root, true);
       append(`Private ballots enabled (dev_mode)`);
       append(`Merkle root committed; share the secret list with eligible voters.`);
       append(`  ${explorerTxUrl(r.signature, "devnet")}`);
     } catch (e: unknown) {
-      setErr(friendlyError(e));
+      patchAdminLive({ err: friendlyError(e) });
     } finally {
-      setBusy(false);
+      patchAdminLive({ busy: false });
     }
   };
 
@@ -309,7 +350,7 @@ export default function AdminPage() {
           <input
             className="mt-1 w-full border border-stone-300 bg-white/70 px-3 py-2"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => patchAdminLive({ title: e.target.value })}
           />
         </label>
         <div className="grid grid-cols-2 gap-4">
@@ -320,7 +361,7 @@ export default function AdminPage() {
               min={0}
               className="mt-1 w-full border border-stone-300 bg-white/70 px-3 py-2"
               value={startInMin}
-              onChange={(e) => setStartInMin(Number(e.target.value))}
+              onChange={(e) => patchAdminLive({ startInMin: Number(e.target.value) })}
             />
             <span className="block mt-1 text-xs text-stone-500">
               0 still reserves ~10 min so create, candidates, and one retry can
@@ -333,7 +374,9 @@ export default function AdminPage() {
               type="number"
               className="mt-1 w-full border border-stone-300 bg-white/70 px-3 py-2"
               value={durationHours}
-              onChange={(e) => setDurationHours(Number(e.target.value))}
+              onChange={(e) =>
+                patchAdminLive({ durationHours: Number(e.target.value) })
+              }
             />
           </label>
         </div>
@@ -342,12 +385,12 @@ export default function AdminPage() {
           <textarea
             className="mt-1 w-full border border-stone-300 bg-white/70 px-3 py-2 min-h-28"
             value={candidates}
-            onChange={(e) => setCandidates(e.target.value)}
+            onChange={(e) => patchAdminLive({ candidates: e.target.value })}
           />
         </label>
         <button
           type="button"
-          disabled={!canWrite || busy || now == null}
+          disabled={busy || now == null}
           onClick={() => void onCreate()}
           className="bg-teal-800 text-white px-4 py-2 disabled:opacity-40"
         >
@@ -357,6 +400,11 @@ export default function AdminPage() {
           Two Phantom prompts: create the election, wait for confirm, then all
           candidates in one transaction.
         </p>
+        {err ? (
+          <p role="alert" className="text-red-700">
+            {err}
+          </p>
+        ) : null}
       </section>
 
       {(checklist.created || electionPda) && (
@@ -414,7 +462,7 @@ export default function AdminPage() {
           <input
             className="mt-1 w-full border border-stone-300 bg-white/70 px-3 py-2 font-mono text-sm"
             value={electionPda}
-            onChange={(e) => setElectionPda(e.target.value)}
+            onChange={(e) => patchAdminLive({ electionPda: e.target.value })}
           />
         </label>
         <label className="block">
@@ -465,7 +513,11 @@ export default function AdminPage() {
         </button>
       </section>
 
-      {err && <p className="text-red-700 mb-4">{err}</p>}
+      {err ? (
+        <p role="alert" className="text-red-700 mb-4">
+          {err}
+        </p>
+      ) : null}
       {log && (
         <pre className="whitespace-pre-wrap text-sm bg-white/60 border border-stone-200 p-4 overflow-auto">
           {log}
