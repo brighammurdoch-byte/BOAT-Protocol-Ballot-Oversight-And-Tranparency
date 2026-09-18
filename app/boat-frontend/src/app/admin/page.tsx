@@ -17,6 +17,7 @@ import {
   pdaElection,
 } from "@boat/sdk";
 import {
+  adminCreateSuccessPatch,
   copyText,
   countdownLabel,
   durableConnection,
@@ -71,6 +72,8 @@ function initialAdminLive(): AdminLive {
 
 let adminLive = initialAdminLive();
 const adminLiveListeners = new Set<() => void>();
+/** Ignore a stale Create catch after a later attempt succeeds. */
+let adminCreateGen = 0;
 
 function subscribeAdminLive(onStoreChange: () => void) {
   adminLiveListeners.add(onStoreChange);
@@ -160,6 +163,7 @@ export default function AdminPage() {
   const onCreate = async () => {
     const current = getAdminLive();
     if (current.sending) return;
+    const gen = ++adminCreateGen;
     patchAdminLive({ sending: true, busy: true, err: null });
     const conn = durableConnection(connection);
     try {
@@ -179,8 +183,8 @@ export default function AdminPage() {
         endTime,
         candidateLabels: labels,
       });
+      if (gen !== adminCreateGen) return;
       const pda = res.election.toBase58();
-      patchAdminLive({ electionPda: pda });
       if (res.reusedExisting) {
         append(`Election already existed ${pda} — added any missing candidates.`);
       } else {
@@ -192,16 +196,21 @@ export default function AdminPage() {
         append(`Tx: ${explorerTxUrl(sig, "devnet")}`);
       }
       append(`Candidates on-chain: ${labels.join(", ")}`);
-      patchAdminLive({
-        checklist: {
-          created: true,
-          candidates: labels.length,
-          registered: getAdminLive().checklist.registered,
-          startTime,
-          endTime,
-        },
-      });
+      // Clear any prior expiry banner only after candidates are on-chain.
+      patchAdminLive(
+        adminCreateSuccessPatch({
+          electionPda: pda,
+          checklist: {
+            created: true,
+            candidates: res.candidateCount,
+            registered: getAdminLive().checklist.registered,
+            startTime,
+            endTime,
+          },
+        })
+      );
     } catch (e: unknown) {
+      if (gen !== adminCreateGen) return;
       // Show the error before any extra RPC. PR #5 awaited getAccountInfo
       // first; an abort/remount there swallowed the banner and reset the form.
       patchAdminLive({ err: friendlyError(e) });
@@ -210,13 +219,17 @@ export default function AdminPage() {
         try {
           const [pda] = pdaElection(wallet.publicKey, titleNow);
           const info = await conn.getAccountInfo(pda, "confirmed");
-          if (info) patchAdminLive({ electionPda: pda.toBase58() });
+          if (info && gen === adminCreateGen) {
+            patchAdminLive({ electionPda: pda.toBase58() });
+          }
         } catch {
           // Keep the create error; do not invent a PDA that is not on-chain.
         }
       }
     } finally {
-      patchAdminLive({ sending: false, busy: false });
+      if (gen === adminCreateGen) {
+        patchAdminLive({ sending: false, busy: false });
+      }
     }
   };
 

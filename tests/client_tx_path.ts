@@ -12,12 +12,14 @@ import {
   MAX_SIGN_ATTEMPTS,
   asVersionedForSimulation,
   assertMessageHeader,
+  blockhashFromSignedBytes,
   blockhashStillValid,
   buildLegacyTransaction,
   computeElectionWindow,
   confirmationSatisfied,
   extractRecentBlockhash,
   formatSimulationError,
+  incompleteCandidatesMessage,
   isAlreadyProcessedError,
   isExpiredBlockhashError,
   parseCandidateLabels,
@@ -26,6 +28,7 @@ import {
   remainingCandidateLabels,
   sendAndConfirmInstructions,
   sendRawUntilConfirmed,
+  signedBlockhashStillValid,
   simulateDispatchKind,
   totalsWithAllCandidates,
 } from "../packages/boat-sdk/src/index";
@@ -108,6 +111,12 @@ function testRemainingCandidatesStartAtOnChainCount() {
     "Carol",
   ]);
   assert.deepEqual(remainingCandidateLabels(["Alice", "Bob", "Carol"], 3), []);
+}
+
+function testIncompleteCandidatesAsksSameTitleRetry() {
+  const msg = incompleteCandidatesMessage(0, 3);
+  assert.match(msg, /0\/3/);
+  assert.match(msg, /same title/i);
 }
 
 function testSimulationErrorDoesNotBlameMissingProgram() {
@@ -526,6 +535,240 @@ async function testBlockhashIsLastRpcBeforeSign() {
   assert.equal(events.slice(0, signAt).includes("height"), false);
 }
 
+/** A single RPC `blockhash not found` must not abort rebroadcast of the same bytes. */
+async function testFirstSendBlockhashNotFoundDoesNotExpire() {
+  let sends = 0;
+  let polls = 0;
+  const connection = {
+    async sendRawTransaction() {
+      sends += 1;
+      if (sends === 1) throw new Error("Blockhash not found");
+      return CONFIRMED_SIG;
+    },
+    async getBlockHeight() {
+      return 100;
+    },
+    async getSignatureStatus() {
+      polls += 1;
+      if (polls < 2) return { value: null };
+      return { value: { err: null, confirmationStatus: "confirmed" } };
+    },
+  };
+  const sig = await sendRawUntilConfirmed(
+    connection as never,
+    new Uint8Array([1]),
+    "11111111111111111111111111111111",
+    200,
+    "confirmed"
+  );
+  assert.equal(sig, CONFIRMED_SIG);
+  assert.ok(sends >= 2, `expected silent resend after blockhash-not-found, got ${sends}`);
+}
+
+/** Resend `blockhash not found` while the hash is still valid must not re-sign. */
+async function testResendBlockhashNotFoundDoesNotResign() {
+  let signs = 0;
+  let sends = 0;
+  let polls = 0;
+  const wallet = mockWallet(() => {
+    signs += 1;
+  });
+  const connection = {
+    async getLatestBlockhash() {
+      return {
+        blockhash: "11111111111111111111111111111111",
+        lastValidBlockHeight: 200,
+      };
+    },
+    async getBlockHeight() {
+      return 100;
+    },
+    async sendRawTransaction() {
+      sends += 1;
+      if (sends === 1) return CONFIRMED_SIG;
+      if (sends === 2) throw new Error("Blockhash not found");
+      return CONFIRMED_SIG;
+    },
+    async getSignatureStatus() {
+      polls += 1;
+      if (polls < 3) return { value: null };
+      return { value: { err: null, confirmationStatus: "confirmed" } };
+    },
+    async getMultipleAccountsInfo() {
+      return [null];
+    },
+  };
+  const sig = await sendAndConfirmInstructions(
+    connection as never,
+    wallet,
+    [dummyIx()],
+    { skipSimulate: true }
+  );
+  assert.equal(sig, CONFIRMED_SIG);
+  assert.equal(signs, 1, `resend flake must not re-open Phantom, got ${signs} signs`);
+}
+
+/** lastValid can be stale after Phantom replaces the hash — trust isBlockhashValid. */
+async function testIsBlockhashValidOutlivesStaleLastValid() {
+  let polls = 0;
+  const connection = {
+    async isBlockhashValid() {
+      return { value: true };
+    },
+    async sendRawTransaction() {
+      return CONFIRMED_SIG;
+    },
+    async getBlockHeight() {
+      return 500;
+    },
+    async getSignatureStatus() {
+      polls += 1;
+      if (polls < 2) return { value: null };
+      return { value: { err: null, confirmationStatus: "confirmed" } };
+    },
+  };
+  const sig = await sendRawUntilConfirmed(
+    connection as never,
+    new Uint8Array([1]),
+    "11111111111111111111111111111111",
+    200,
+    "confirmed"
+  );
+  assert.equal(sig, CONFIRMED_SIG);
+}
+
+async function testSignedBlockhashPrefersIsBlockhashValid() {
+  const dead = await signedBlockhashStillValid(
+    {
+      async isBlockhashValid() {
+        return { value: false };
+      },
+      async getBlockHeight() {
+        return 100;
+      },
+    } as never,
+    "11111111111111111111111111111111",
+    200,
+    "confirmed"
+  );
+  assert.equal(dead, false);
+
+  const alive = await signedBlockhashStillValid(
+    {
+      async getBlockHeight() {
+        return 100;
+      },
+    } as never,
+    "11111111111111111111111111111111",
+    200,
+    "confirmed"
+  );
+  assert.equal(alive, true);
+}
+
+function testBlockhashFromSignedBytesReadsLegacyHash() {
+  const payer = Keypair.generate();
+  const tx = buildLegacyTransaction(
+    payer.publicKey,
+    [
+      SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: payer.publicKey,
+        lamports: 1,
+      }),
+    ],
+    "11111111111111111111111111111111",
+    200
+  );
+  tx.sign(payer);
+  const raw = tx.serialize();
+  assert.equal(blockhashFromSignedBytes(raw), tx.recentBlockhash);
+  assert.equal(blockhashFromSignedBytes(new Uint8Array([1, 2, 3])), null);
+}
+
+/** Confirm miss + PDA already on-chain must not open a second Phantom prompt. */
+async function testExpiryWithWaitForAccountsDoesNotResign() {
+  let signs = 0;
+  const waitFor = Keypair.generate().publicKey;
+  const wallet = mockWallet(() => {
+    signs += 1;
+  });
+  const connection = {
+    async getLatestBlockhash() {
+      return {
+        blockhash: "11111111111111111111111111111111",
+        lastValidBlockHeight: 200,
+      };
+    },
+    async getBlockHeight() {
+      return 201;
+    },
+    async sendRawTransaction() {
+      return CONFIRMED_SIG;
+    },
+    async getSignatureStatus() {
+      return { value: null };
+    },
+    async getMultipleAccountsInfo() {
+      return [{ data: new Uint8Array([1]) }];
+    },
+    async getAccountInfo() {
+      return { data: new Uint8Array([1]) };
+    },
+  };
+  const sig = await sendAndConfirmInstructions(
+    connection as never,
+    wallet,
+    [dummyIx()],
+    { skipSimulate: true, waitFor: [waitFor] }
+  );
+  assert.equal(sig, "");
+  assert.equal(signs, 0, "existing waitFor accounts must skip the wallet");
+}
+
+/** Hash dies, then the first signed tx's accounts appear — do not re-sign. */
+async function testExpiryThenAccountsLandDoesNotResign() {
+  let signs = 0;
+  let accountPolls = 0;
+  const waitFor = Keypair.generate().publicKey;
+  const wallet = mockWallet(() => {
+    signs += 1;
+  });
+  const connection = {
+    async getLatestBlockhash() {
+      return {
+        blockhash: "11111111111111111111111111111111",
+        lastValidBlockHeight: 200,
+      };
+    },
+    async getBlockHeight() {
+      return signs === 0 ? 100 : 201;
+    },
+    async sendRawTransaction() {
+      return CONFIRMED_SIG;
+    },
+    async getSignatureStatus() {
+      return signs < 1
+        ? { value: { err: null, confirmationStatus: "confirmed" } }
+        : { value: null };
+    },
+    async getMultipleAccountsInfo() {
+      accountPolls += 1;
+      // First pre-sign check: not yet. After the confirm-miss, they exist.
+      if (accountPolls === 1) return [null];
+      return [{ data: new Uint8Array([1]) }];
+    },
+  };
+  const sig = await sendAndConfirmInstructions(
+    connection as never,
+    wallet,
+    [dummyIx()],
+    { skipSimulate: true, waitFor: [waitFor] }
+  );
+  assert.ok(typeof sig === "string");
+  assert.equal(signs, 1, `landed accounts must not trigger a second prompt, got ${signs}`);
+}
+
 /** Wallet refreshed the message hash — do not expire using our stale lastValid. */
 async function testWalletReplacedBlockhashDoesNotUseStaleLastValid() {
   let signs = 0;
@@ -624,6 +867,14 @@ const tests = [
   testResignOnceAfterHashDies,
   testBlockhashIsLastRpcBeforeSign,
   testWalletReplacedBlockhashDoesNotUseStaleLastValid,
+  testIncompleteCandidatesAsksSameTitleRetry,
+  testFirstSendBlockhashNotFoundDoesNotExpire,
+  testResendBlockhashNotFoundDoesNotResign,
+  testIsBlockhashValidOutlivesStaleLastValid,
+  testSignedBlockhashPrefersIsBlockhashValid,
+  testBlockhashFromSignedBytesReadsLegacyHash,
+  testExpiryWithWaitForAccountsDoesNotResign,
+  testExpiryThenAccountsLandDoesNotResign,
 ];
 
 async function main() {
