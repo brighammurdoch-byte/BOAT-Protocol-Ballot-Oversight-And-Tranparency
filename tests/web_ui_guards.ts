@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  adminCreateSuccessPatch,
   canSendVoteTx,
   friendlyError,
   isAbortError,
@@ -35,11 +36,24 @@ function testCastButtonSendsSelectedIncludingAlice() {
   assert.equal(canSendVoteTx(true, null), false);
 }
 
+function testCreateSuccessClearsExpiryBanner() {
+  const prior = {
+    err: friendlyError(new Error("block height exceeded")),
+    electionPda: "4fazoTo54vSc1w4z8cxaUTYCRAEBGqDvFhhWhwQTC6QT",
+    checklist: { created: true, candidates: 0 },
+  };
+  assert.match(prior.err, /expired|rebroadcasts/i);
+  const next = { ...prior, ...adminCreateSuccessPatch({ checklist: { created: true, candidates: 3 } }) };
+  assert.equal(next.err, null);
+  assert.equal(next.checklist.candidates, 3);
+}
+
 const tests = [
   testAbortIsVisibleError,
   testEmptyErrorIsVisible,
   testAliceRadioDoesNotSend,
   testCastButtonSendsSelectedIncludingAlice,
+  testCreateSuccessClearsExpiryBanner,
 ];
 
 async function main() {

@@ -8,8 +8,12 @@ import {
 } from "@solana/web3.js";
 import type { AnchorWalletLike } from "./wallet";
 import {
+  EXPIRED_LANDING_GRACE_MS,
+  isAlreadyProcessedError,
+  isExpiredBlockhashError,
   sendAndConfirmInstructions,
   waitForAccount,
+  waitForAccountSettled,
   waitUntilSimulates,
 } from "./tx";
 import { parseCandidateLabels, remainingCandidateLabels } from "./helpers";
@@ -57,11 +61,13 @@ export {
   totalsWithAllCandidates,
 } from "./helpers";
 export {
+  EXPIRED_LANDING_GRACE_MS,
   MAX_SIGN_ATTEMPTS,
   MIN_BLOCKHASH_SLOTS_REMAINING,
   TX_RESEND_INTERVAL_MS,
   asVersionedForSimulation,
   assertMessageHeader,
+  blockhashFromSignedBytes,
   blockhashStillValid,
   buildLegacyTransaction,
   confirmationSatisfied,
@@ -71,8 +77,10 @@ export {
   isExpiredBlockhashError,
   sendAndConfirmInstructions,
   sendRawUntilConfirmed,
+  signedBlockhashStillValid,
   simulateDispatchKind,
   waitForAccount,
+  waitForAccountSettled,
 } from "./tx";
 
 export function getBoatProgram(
@@ -335,6 +343,9 @@ export async function addOutcomes(
  * candidate PDAs is what Phantom hard-blocks (first click lands nothing).
  * Do not send add_N until add_{N-1} is confirmed; the program requires
  * `outcome_count == index` at simulation time.
+ *
+ * If init's confirm is missed but the PDA appears, resume candidates only.
+ * Same-title retry also skips init and only finishes missing adds.
  */
 export async function initializeElectionWithOutcomes(
   connection: Connection,
@@ -356,29 +367,47 @@ export async function initializeElectionWithOutcomes(
       const created = await initializeElection(connection, wallet, args, programId);
       signatures.push(created.signature);
     } catch (e) {
-      const landed = await connection.getAccountInfo(election, "confirmed");
+      const landed = await waitForAccountSettled(
+        connection,
+        election,
+        EXPIRED_LANDING_GRACE_MS
+      );
       if (!landed) throw e;
       reusedExisting = true;
     }
   }
 
-  const added = await addOutcomes(
+  let added: Awaited<ReturnType<typeof addOutcomes>>;
+  try {
+    added = await addOutcomes(connection, wallet, election, labels, programId);
+  } catch (e) {
+    const haveNow = await fetchElectionOutcomeCount(
+      connection,
+      wallet,
+      election,
+      programId
+    );
+    if (haveNow >= labels.length) {
+      added = { signature: "", outcomes: [], added: 0, skipped: true };
+    } else if (
+      haveNow >= 0 &&
+      (isExpiredBlockhashError(e) || isAlreadyProcessedError(e))
+    ) {
+      throw new Error(incompleteCandidatesMessage(haveNow, labels.length));
+    } else {
+      throw e;
+    }
+  }
+  if (added.signature) signatures.push(added.signature);
+
+  const have = await fetchElectionOutcomeCount(
     connection,
     wallet,
     election,
-    labels,
     programId
   );
-  if (added.signature) signatures.push(added.signature);
-
-  const program = getBoatProgram(connection, wallet, programId);
-  const onChain = await (program.account as any).election.fetch(election);
-  const have = Number(onChain.outcomeCount ?? onChain.outcome_count ?? 0);
   if (have < labels.length) {
-    throw new Error(
-      `Election is on-chain with ${have}/${labels.length} candidates. ` +
-        `Click Create again with the same title to add the rest before voting opens.`
-    );
+    throw new Error(incompleteCandidatesMessage(Math.max(0, have), labels.length));
   }
 
   return {
@@ -390,6 +419,29 @@ export async function initializeElectionWithOutcomes(
     candidateCount: have,
     reusedExisting,
   };
+}
+
+export function incompleteCandidatesMessage(have: number, need: number): string {
+  return (
+    `Election is on-chain with ${have}/${need} candidates. ` +
+    `Click Create again with the same title to add the rest before voting opens.`
+  );
+}
+
+/** `-1` if the election account is not fetchable yet. */
+export async function fetchElectionOutcomeCount(
+  connection: Connection,
+  wallet: AnchorWalletLike,
+  election: PublicKey,
+  programId: PublicKey = DEFAULT_BOAT_PROGRAM_ID
+): Promise<number> {
+  try {
+    const program = getBoatProgram(connection, wallet, programId);
+    const onChain = await (program.account as any).election.fetch(election);
+    return Number(onChain.outcomeCount ?? onChain.outcome_count ?? 0);
+  } catch {
+    return -1;
+  }
 }
 
 export async function setElectionConfig(

@@ -20,6 +20,12 @@ export const TX_RESEND_INTERVAL_MS = 400;
  */
 export const MAX_SIGN_ATTEMPTS = 2;
 
+/**
+ * After a confirm miss, wait this long for the PDA to appear before
+ * re-signing or telling the user the first tx died.
+ */
+export const EXPIRED_LANDING_GRACE_MS = 10_000;
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -94,20 +100,44 @@ export function confirmationSatisfied(
   return false;
 }
 
+export async function waitForAccountSettled(
+  connection: Connection,
+  pubkey: PublicKey,
+  timeoutMs = 25_000
+): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const info = await connection.getAccountInfo(pubkey, "confirmed");
+    if (info) return true;
+    await sleep(400);
+  }
+  return false;
+}
+
 export async function waitForAccount(
   connection: Connection,
   pubkey: PublicKey,
   timeoutMs = 25_000
 ): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const info = await connection.getAccountInfo(pubkey, "confirmed");
-    if (info) return;
-    await sleep(400);
-  }
+  if (await waitForAccountSettled(connection, pubkey, timeoutMs)) return;
   throw new Error(
     `Timed out waiting for ${pubkey.toBase58()} to confirm on Devnet.`
   );
+}
+
+export async function waitForAccountsSettled(
+  connection: Connection,
+  pubkeys: PublicKey[],
+  timeoutMs: number,
+  commitment: Commitment = "confirmed"
+): Promise<boolean> {
+  if (pubkeys.length === 0) return false;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await accountsExist(connection, pubkeys, commitment)) return true;
+    await sleep(400);
+  }
+  return false;
 }
 
 export async function accountsExist(
@@ -244,6 +274,58 @@ export function extractRecentBlockhash(signed: unknown): string | null {
   return null;
 }
 
+/** Decode the hash we are actually rebroadcasting (Phantom may have replaced it). */
+export function blockhashFromSignedBytes(raw: Uint8Array): string | null {
+  const bytes =
+    typeof Buffer !== "undefined" && typeof Buffer.from === "function"
+      ? Buffer.from(raw)
+      : raw;
+  try {
+    const tx = Transaction.from(bytes);
+    if (tx.recentBlockhash) return tx.recentBlockhash;
+  } catch {
+    // not a legacy transaction
+  }
+  try {
+    const vtx = VersionedTransaction.deserialize(raw);
+    if (vtx.message.recentBlockhash) return vtx.message.recentBlockhash;
+  } catch {
+    // not a versioned transaction
+  }
+  return null;
+}
+
+type BlockhashValidConn = Connection & {
+  isBlockhashValid?: (
+    blockhash: string,
+    config?: { commitment?: Commitment }
+  ) => Promise<boolean | { value: boolean }>;
+};
+
+/**
+ * Prefer `isBlockhashValid` on the signed hash. lastValidBlockHeight belongs
+ * to whichever hash we fetched — Phantom may have replaced it.
+ */
+export async function signedBlockhashStillValid(
+  connection: Connection,
+  blockhash: string,
+  lastValidBlockHeight: number,
+  commitment: Commitment = "confirmed"
+): Promise<boolean> {
+  const conn = connection as BlockhashValidConn;
+  if (typeof conn.isBlockhashValid === "function") {
+    try {
+      const res = await conn.isBlockhashValid(blockhash, { commitment });
+      if (typeof res === "boolean") return res;
+      if (res && typeof res.value === "boolean") return res.value;
+    } catch {
+      // fall through to lastValid
+    }
+  }
+  const height = await connection.getBlockHeight(commitment);
+  return blockhashStillValid(height, lastValidBlockHeight);
+}
+
 function expiryError(signature: string | null): Error {
   return new Error(
     signature
@@ -254,48 +336,39 @@ function expiryError(signature: string | null): Error {
 
 /**
  * Rebroadcast the same signed bytes until confirmed or the hash expires.
- * Never opens the wallet. Devnet routinely drops the first send.
+ * Never opens the wallet. Devnet routinely drops the first send, and a
+ * `blockhash not found` from one RPC node is not proof the hash is dead.
  */
 export async function sendRawUntilConfirmed(
   connection: Connection,
   raw: Uint8Array,
-  _blockhash: string,
+  blockhash: string,
   lastValidBlockHeight: number,
   commitment: Commitment = "confirmed"
 ): Promise<string> {
   let signature: string | null = null;
+  const wireHash = blockhashFromSignedBytes(raw) ?? blockhash;
 
-  const sendOnce = async (): Promise<string | null> => {
+  const sendOnce = async (): Promise<void> => {
     try {
       const sig = await connection.sendRawTransaction(raw, {
         skipPreflight: true,
         maxRetries: 0,
       });
       signature = sig;
-      return sig;
     } catch (e) {
-      if (isAlreadyProcessedError(e) && signature) return signature;
-      if (isExpiredBlockhashError(e)) {
-        throw expiryError(signature);
-      }
-      // Transient RPC (429 / drop / fetch) — keep the same bytes in play.
-      return signature;
+      if (isAlreadyProcessedError(e) && signature) return;
+      // Expiry-shaped send errors are unverified — another node may
+      // still hold a live hash or the first send may already have landed.
     }
   };
 
   const statusOf = async (sig: string) =>
     connection.getSignatureStatus(sig, { searchTransactionHistory: true });
 
-  try {
-    signature = await sendOnce();
-  } catch (e) {
-    if (isExpiredBlockhashError(e)) throw e;
-  }
+  await sendOnce();
 
   while (true) {
-    const height = await connection.getBlockHeight(commitment);
-    const hashAlive = blockhashStillValid(height, lastValidBlockHeight);
-
     if (signature) {
       const status = await statusOf(signature);
       if (status.value?.err) {
@@ -306,7 +379,24 @@ export async function sendRawUntilConfirmed(
       }
     }
 
+    const hashAlive = await signedBlockhashStillValid(
+      connection,
+      wireHash,
+      lastValidBlockHeight,
+      commitment
+    );
     if (!hashAlive) {
+      if (signature) {
+        const status = await statusOf(signature);
+        if (status.value?.err) {
+          throw new Error(
+            `Transaction failed: ${JSON.stringify(status.value.err)}`
+          );
+        }
+        if (confirmationSatisfied(status.value?.confirmationStatus, commitment)) {
+          return signature;
+        }
+      }
       throw expiryError(signature);
     }
 
@@ -409,7 +499,9 @@ export async function sendAndConfirmInstructions(
       throw new Error("Wallet returned an empty signed transaction.");
     }
 
-    const usedBlockhash = extractRecentBlockhash(signed) ?? blockhash;
+    const raw = serializeSigned(signed);
+    const usedBlockhash =
+      blockhashFromSignedBytes(raw) ?? extractRecentBlockhash(signed) ?? blockhash;
     let usedLastValid = lastValidBlockHeight;
     if (usedBlockhash !== blockhash) {
       // Phantom / wallet-standard may refresh the message hash on approve.
@@ -418,7 +510,6 @@ export async function sendAndConfirmInstructions(
       usedLastValid = latest.lastValidBlockHeight;
     }
 
-    const raw = serializeSigned(signed);
     try {
       const sig = await sendRawUntilConfirmed(
         connection,
@@ -433,8 +524,18 @@ export async function sendAndConfirmInstructions(
       return sig;
     } catch (e) {
       lastErr = e;
-      if (waitFor.length > 0 && (await accountsExist(connection, waitFor, commitment))) {
-        return errorMessage(e).match(/[1-9A-HJ-NP-Za-km-z]{64,}/)?.[0] ?? "";
+      if (waitFor.length > 0) {
+        const landed =
+          (await accountsExist(connection, waitFor, commitment)) ||
+          (await waitForAccountsSettled(
+            connection,
+            waitFor,
+            EXPIRED_LANDING_GRACE_MS,
+            commitment
+          ));
+        if (landed) {
+          return errorMessage(e).match(/[1-9A-HJ-NP-Za-km-z]{64,}/)?.[0] ?? "";
+        }
       }
       if (!isExpiredBlockhashError(e) || attempt === MAX_SIGN_ATTEMPTS) {
         throw e instanceof Error ? e : new Error(errorMessage(e));

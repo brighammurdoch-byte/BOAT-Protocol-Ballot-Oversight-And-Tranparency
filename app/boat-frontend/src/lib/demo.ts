@@ -75,6 +75,13 @@ export function readOnlyWallet(publicKey?: PublicKey | null): WalletLike {
   };
 }
 
+/** Create success must wipe a prior expiry banner — `err` omitted from a patch would stick. */
+export function adminCreateSuccessPatch<T extends Record<string, unknown>>(
+  patch: T
+): T & { err: null } {
+  return { ...patch, err: null };
+}
+
 /** Map common Solana / Anchor errors to demo-friendly copy. */
 export function friendlyError(err: unknown): string {
   if (isAbortError(err)) {
