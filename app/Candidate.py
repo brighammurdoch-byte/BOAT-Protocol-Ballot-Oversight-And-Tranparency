@@ -1,7 +1,10 @@
 class Candidate:
-    def __init__(self, name):
+    """A ballot option. `index` is the on-chain outcome_index (assigned by ElectionInit)."""
+
+    def __init__(self, name, index=None):
         self.name = name
-        self.votes_received = 0 # (Optional) Just for local tracking if you want
+        self.index = index
+        self.votes_received = 0  # filled in from on-chain data by the tally
 
     def __str__(self):
-        return f"📜 Candidate: {self.name}"
+        return f"📜 Candidate #{self.index}: {self.name}"
