@@ -54,3 +54,5 @@ Thumbs.db
 # Optional: if you have frontend builds or other
 *.log
 temp/
+# Python demo throwaway wallet
+app/.demo_admin.json

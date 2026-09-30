@@ -1,326 +1,115 @@
-import os
-import json
-import time
+"""Integration tests that hit the deployed BOAT program directly (default: devnet). No front end, no ZK.
+
+Run:  python -m unittest contract_unit_tests -v      (from the app/ folder)
+Env:  BOAT_RPC_URL, BOAT_PROGRAM_ID, BOAT_ADMIN_KEYPAIR (see utils.py). Needs ~0.1 SOL on the admin wallet.
+
+Removed from the program (tests dropped): enable_token_voting / cast_vote_with_token.
+The IDL now exposes: initialize_election, set_election_config, add_outcome, register_voter, cast_vote,
+delegate_vote (+ ZK/private-ballot instructions, which are intentionally not covered here).
+"""
 import struct
+import time
 import unittest
 
 from solana.rpc.api import Client
-from solders.pubkey import Pubkey
+from solana.rpc.commitment import Confirmed
+from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
-from solders.instruction import Instruction, AccountMeta
-from solders.message import Message
-from solders.transaction import Transaction
-from solders.system_program import ID as SYS_PROGRAM_ID
 
-from utils import get_discriminator, derive_pda, pack_string, get_associated_token_address, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+from Candidate import Candidate
+from ElectionInit import ElectionInit
+from Voter import Voter
+from utils import (
+    PROGRAM_ID, RPC_URL, config_pda, ensure_funds, fetch_election, get_admin_keypair, get_discriminator,
+    send_and_confirm, tally_from_chain, voter_registry_pda, wait_for_cluster_time, cluster_time,
+)
 
-
-PROGRAM_ID = Pubkey.from_string("5ZvG5oXKD6YKgWkAKWQMjdAb3vXEWzRNNGk3uRSt63gP")
-ADMIN_KEY_FILE = os.path.join(os.path.dirname(__file__), "admin.json")
-
-
-def load_admin() -> Keypair:
-    with open(ADMIN_KEY_FILE, "r") as f:
-        secret = json.load(f)
-    return Keypair.from_bytes(secret)
-
-
-def send_and_confirm(client: Client, payer: Keypair, instructions, additional_signers=None):
-    if additional_signers is None:
-        additional_signers = []
-    latest_blockhash = client.get_latest_blockhash().value.blockhash
-    msg = Message(instructions, payer.pubkey())
-    tx = Transaction([payer, *additional_signers], msg, latest_blockhash)
-    sig = client.send_transaction(tx).value
-    # Devnet can be a bit laggy; poll until confirmed/finalized so subsequent instructions
-    # don't hit AccountNotInitialized due to timing.
-    for _ in range(30):
-        try:
-            st = client.get_signature_statuses([sig]).value[0]
-            if st and st.confirmation_status in ("confirmed", "finalized") and st.err is None:
-                return sig
-        except Exception:
-            pass
-        time.sleep(1)
-    return sig
-
-
-def must_fail(fn, contains: str):
-    try:
-        fn()
-    except Exception as e:
-        s = str(e)
-        if contains and contains not in s:
-            raise AssertionError(f"Expected error containing '{contains}', got: {s}") from e
-        return
-    raise AssertionError("Expected transaction to fail, but it succeeded")
+START_DELAY = 20
 
 
 class BoatContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.client = Client("https://api.devnet.solana.com", commitment="confirmed")
-        cls.admin = load_admin()
+        cls.client = Client(RPC_URL, commitment=Confirmed)
+        cls.admin = get_admin_keypair()
+        if not ensure_funds(cls.client, cls.admin.pubkey(), min_sol=0.1):
+            raise unittest.SkipTest("admin wallet not funded")
 
-    def setUp(self):
-        ts = int(time.time())
-        self.title = f"UnitTest_{ts}"
-        self.start_time = ts - 2
-        self.end_time = ts + 600
+    def new_election(self, register=1, start_delay=START_DELAY):
+        title = f"UnitTest_{int(time.time() * 1000)}"
+        start = cluster_time(self.client) + start_delay
+        cands = [Candidate("Alice"), Candidate("Bob")]
+        init = ElectionInit(self.client, self.admin, title, start, start + 600, cands)
+        voters = [Voter() for _ in range(register)]
+        for v in voters:
+            sig = v.send_and_confirm(self.client, v.register_voter(self.admin.pubkey(), title, 1), self.admin, self.admin, "register")
+            self.assertTrue(sig)
+        return title, start, init, cands, voters
 
-        self.election_pda = derive_pda(PROGRAM_ID, [b"election", bytes(self.admin.pubkey()), self.title.encode()])
-        self.config_pda = derive_pda(PROGRAM_ID, [b"config", bytes(self.election_pda)])
-        self.sbt_mint_pda = derive_pda(PROGRAM_ID, [b"mint", bytes(self.election_pda)])
+    def cast(self, voter, cand, title):
+        return voter.send_and_confirm(self.client, voter.cast_vote(self.admin.pubkey(), cand, title), voter.keypair, self.admin, "cast")
 
-    def test_01_initialize_election(self):
-        ix_data = (
-            get_discriminator("initialize_election")
-            + pack_string(self.title)
-            + struct.pack("<qq", self.start_time, self.end_time)
-        )
-        ix = Instruction(
-            PROGRAM_ID,
-            ix_data,
-            [
-                AccountMeta(self.admin.pubkey(), is_signer=True, is_writable=True),
-                AccountMeta(self.election_pda, is_signer=False, is_writable=True),
-                AccountMeta(self.config_pda, is_signer=False, is_writable=True),
-                AccountMeta(self.sbt_mint_pda, is_signer=False, is_writable=True),
-                AccountMeta(SYS_PROGRAM_ID, is_signer=False, is_writable=False),
-                AccountMeta(TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),
-                AccountMeta(Pubkey.from_string("SysvarRent111111111111111111111111111111111"), is_signer=False, is_writable=False),
-            ],
-        )
-        sig = send_and_confirm(self.client, self.admin, [ix])
-        self.assertTrue(sig)
+    def test_01_initialize_and_outcomes(self):
+        title, start, init, cands, _ = self.new_election(register=0)
+        el = fetch_election(self.client, init.election)
+        self.assertEqual(el.title, title)
+        self.assertEqual(el.outcome_count, 2)
 
     def test_02_set_election_config(self):
-        self.test_01_initialize_election()
+        title = f"UnitTestCfg_{int(time.time() * 1000)}"
+        start = cluster_time(self.client) + 60
+        init = ElectionInit(self.client, self.admin, title, start, start + 600, [Candidate("A")])
+        data = (get_discriminator("set_election_config") + struct.pack("<Q", 2) + struct.pack("<B", 40)
+                + struct.pack("<B", 2) + struct.pack("<Q", 0) + struct.pack("<?", True))
+        ix = Instruction(PROGRAM_ID, data, [
+            AccountMeta(self.admin.pubkey(), True, False),
+            AccountMeta(init.election, False, False),
+            AccountMeta(config_pda(init.election), False, True),
+        ])
+        self.assertTrue(send_and_confirm(self.client, [ix], [self.admin], self.admin, label="set_election_config"))
 
-        ix_data = (
-            get_discriminator("set_election_config")
-            + struct.pack("<Q", 2)      # default_voter_weight
-            + struct.pack("<B", 40)     # quorum_percentage
-            + struct.pack("<B", 2)      # max_free_vote_changes
-            + struct.pack("<Q", 0)      # price_per_vote_change
-            + struct.pack("<?", True)   # allow_delegation
-        )
-        ix = Instruction(
-            PROGRAM_ID,
-            ix_data,
-            [
-                AccountMeta(self.admin.pubkey(), is_signer=True, is_writable=True),
-                AccountMeta(self.election_pda, is_signer=False, is_writable=False),
-                AccountMeta(self.config_pda, is_signer=False, is_writable=True),
-            ],
-        )
-        sig = send_and_confirm(self.client, self.admin, [ix])
-        self.assertTrue(sig)
+    def test_03_register_vote_change_and_tally(self):
+        title, start, init, (alice, bob), (voter,) = self.new_election()
+        wait_for_cluster_time(self.client, start + 2)
+        self.assertTrue(self.cast(voter, alice, title))
+        _, _, tally, _ = tally_from_chain(self.client, init.election, [voter.pubkey])
+        self.assertEqual(tally, {"Alice": 1, "Bob": 0})
+        self.assertTrue(self.cast(voter, bob, title))  # change vote (max_free_vote_changes default = 2)
+        _, _, tally, regs = tally_from_chain(self.client, init.election, [voter.pubkey])
+        self.assertEqual(tally, {"Alice": 0, "Bob": 1})
+        self.assertEqual(regs[0].vote_changes_used, 1)
 
-    def test_03_register_and_cast_vote_and_change(self):
-        self.test_01_initialize_election()
+    def test_04_unregistered_voter_cannot_vote(self):
+        title, start, init, (alice, _), _ = self.new_election(register=0)
+        wait_for_cluster_time(self.client, start + 2)
+        stranger = Voter()
+        # fund-less stranger: the admin pays fees; the transaction must fail because there is no registry/token account
+        sig = self.cast(stranger, alice, title)
+        self.assertIsNone(sig)
 
-        voter = Keypair()
-        voter_registry = derive_pda(PROGRAM_ID, [b"voter_registry", bytes(self.election_pda), bytes(voter.pubkey())])
-        voter_ata = get_associated_token_address(voter.pubkey(), self.sbt_mint_pda, TOKEN_2022_PROGRAM_ID)
-
-        reg_ix = Instruction(
-            PROGRAM_ID,
-            get_discriminator("register_voter") + struct.pack("<Q", 1),
-            [
-                AccountMeta(self.admin.pubkey(), is_signer=True, is_writable=True),
-                AccountMeta(self.election_pda, is_signer=False, is_writable=True),
-                AccountMeta(self.config_pda, is_signer=False, is_writable=False),
-                AccountMeta(self.sbt_mint_pda, is_signer=False, is_writable=True),
-                AccountMeta(voter.pubkey(), is_signer=False, is_writable=True),
-                AccountMeta(voter_registry, is_signer=False, is_writable=True),
-                AccountMeta(voter_ata, is_signer=False, is_writable=True),
-                AccountMeta(SYS_PROGRAM_ID, is_signer=False, is_writable=False),
-                AccountMeta(TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),
-                AccountMeta(ASSOCIATED_TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
-            ],
-        )
-        sig = send_and_confirm(self.client, self.admin, [reg_ix])
-        self.assertTrue(sig)
-
-        cast_ix = Instruction(
-            PROGRAM_ID,
-            get_discriminator("cast_vote") + pack_string("Alice"),
-            [
-                AccountMeta(voter.pubkey(), is_signer=True, is_writable=True),
-                AccountMeta(self.admin.pubkey(), is_signer=False, is_writable=True),
-                AccountMeta(self.election_pda, is_signer=False, is_writable=True),
-                AccountMeta(self.config_pda, is_signer=False, is_writable=False),
-                AccountMeta(self.sbt_mint_pda, is_signer=False, is_writable=True),
-                AccountMeta(voter_registry, is_signer=False, is_writable=True),
-                AccountMeta(voter_ata, is_signer=False, is_writable=True),
-                AccountMeta(TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),
-                AccountMeta(SYS_PROGRAM_ID, is_signer=False, is_writable=False),
-            ],
-        )
-        sig2 = send_and_confirm(self.client, self.admin, [cast_ix], additional_signers=[voter])
-        self.assertTrue(sig2)
-
-        # Vote change should succeed (default max_free_vote_changes = 2)
-        cast2_ix = Instruction(
-            PROGRAM_ID,
-            get_discriminator("cast_vote") + pack_string("Bob"),
-            cast_ix.accounts,
-        )
-        sig3 = send_and_confirm(self.client, self.admin, [cast2_ix], additional_signers=[voter])
-        self.assertTrue(sig3)
-
-    def test_04_delegate_vote_blocks_direct_vote(self):
-        self.test_01_initialize_election()
-
-        voter_a = Keypair()
-        voter_b = Keypair()
-
-        def reg(voter: Keypair):
-            voter_registry = derive_pda(PROGRAM_ID, [b"voter_registry", bytes(self.election_pda), bytes(voter.pubkey())])
-            voter_ata = get_associated_token_address(voter.pubkey(), self.sbt_mint_pda, TOKEN_2022_PROGRAM_ID)
-            ix = Instruction(
-                PROGRAM_ID,
-                get_discriminator("register_voter") + struct.pack("<Q", 1),
-                [
-                    AccountMeta(self.admin.pubkey(), is_signer=True, is_writable=True),
-                    AccountMeta(self.election_pda, is_signer=False, is_writable=True),
-                    AccountMeta(self.config_pda, is_signer=False, is_writable=False),
-                    AccountMeta(self.sbt_mint_pda, is_signer=False, is_writable=True),
-                    AccountMeta(voter.pubkey(), is_signer=False, is_writable=True),
-                    AccountMeta(voter_registry, is_signer=False, is_writable=True),
-                    AccountMeta(voter_ata, is_signer=False, is_writable=True),
-                    AccountMeta(SYS_PROGRAM_ID, is_signer=False, is_writable=False),
-                    AccountMeta(TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),
-                    AccountMeta(ASSOCIATED_TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
-                ],
-            )
-            send_and_confirm(self.client, self.admin, [ix])
-            return voter_registry, voter_ata
-
-        a_registry, a_ata = reg(voter_a)
-        b_registry, _ = reg(voter_b)
-
-        delegate_ix = Instruction(
-            PROGRAM_ID,
-            get_discriminator("delegate_vote"),
-            [
-                AccountMeta(voter_a.pubkey(), is_signer=True, is_writable=True),
-                AccountMeta(self.election_pda, is_signer=False, is_writable=False),
-                AccountMeta(self.config_pda, is_signer=False, is_writable=False),
-                AccountMeta(a_registry, is_signer=False, is_writable=True),
-                AccountMeta(b_registry, is_signer=False, is_writable=False),
-            ],
-        )
-        sig = send_and_confirm(self.client, self.admin, [delegate_ix], additional_signers=[voter_a])
-        self.assertTrue(sig)
-
-        def try_cast():
-            cast_ix = Instruction(
-                PROGRAM_ID,
-                get_discriminator("cast_vote") + pack_string("Alice"),
-                [
-                    AccountMeta(voter_a.pubkey(), is_signer=True, is_writable=True),
-                    AccountMeta(self.admin.pubkey(), is_signer=False, is_writable=True),
-                    AccountMeta(self.election_pda, is_signer=False, is_writable=True),
-                    AccountMeta(self.config_pda, is_signer=False, is_writable=False),
-                    AccountMeta(self.sbt_mint_pda, is_signer=False, is_writable=True),
-                    AccountMeta(a_registry, is_signer=False, is_writable=True),
-                    AccountMeta(a_ata, is_signer=False, is_writable=True),
-                    AccountMeta(TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),
-                    AccountMeta(SYS_PROGRAM_ID, is_signer=False, is_writable=False),
-                ],
-            )
-            send_and_confirm(self.client, self.admin, [cast_ix], additional_signers=[voter_a])
-
-        must_fail(try_cast, "CannotVoteIfDelegated")
-
-    def test_05_enable_token_voting_and_cast_with_sbt(self):
-        # Use the election's own SBT mint as the "governance token" for token voting.
-        self.test_01_initialize_election()
-
-        # Set min_token_balance = 2 to force a failure for a weight-1 voter
-        enable_ix = Instruction(
-            PROGRAM_ID,
-            get_discriminator("enable_token_voting") + struct.pack("<Q", 2),
-            [
-                AccountMeta(self.admin.pubkey(), is_signer=True, is_writable=True),
-                AccountMeta(self.election_pda, is_signer=False, is_writable=False),
-                AccountMeta(self.config_pda, is_signer=False, is_writable=True),
-                AccountMeta(self.sbt_mint_pda, is_signer=False, is_writable=False),
-                AccountMeta(SYS_PROGRAM_ID, is_signer=False, is_writable=False),
-            ],
-        )
-        send_and_confirm(self.client, self.admin, [enable_ix])
-
-        voter = Keypair()
-        voter_registry = derive_pda(PROGRAM_ID, [b"voter_registry", bytes(self.election_pda), bytes(voter.pubkey())])
-        voter_ata = get_associated_token_address(voter.pubkey(), self.sbt_mint_pda, TOKEN_2022_PROGRAM_ID)
-        reg_ix = Instruction(
-            PROGRAM_ID,
-            get_discriminator("register_voter") + struct.pack("<Q", 1),
-            [
-                AccountMeta(self.admin.pubkey(), is_signer=True, is_writable=True),
-                AccountMeta(self.election_pda, is_signer=False, is_writable=True),
-                AccountMeta(self.config_pda, is_signer=False, is_writable=False),
-                AccountMeta(self.sbt_mint_pda, is_signer=False, is_writable=True),
-                AccountMeta(voter.pubkey(), is_signer=False, is_writable=True),
-                AccountMeta(voter_registry, is_signer=False, is_writable=True),
-                AccountMeta(voter_ata, is_signer=False, is_writable=True),
-                AccountMeta(SYS_PROGRAM_ID, is_signer=False, is_writable=False),
-                AccountMeta(TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),
-                AccountMeta(ASSOCIATED_TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
-            ],
-        )
-        send_and_confirm(self.client, self.admin, [reg_ix])
-
-        def cast_should_fail():
-            ix = Instruction(
-                PROGRAM_ID,
-                get_discriminator("cast_vote_with_token") + pack_string("Alice"),
-                [
-                    AccountMeta(voter.pubkey(), is_signer=True, is_writable=True),
-                    AccountMeta(self.election_pda, is_signer=False, is_writable=False),
-                    AccountMeta(self.config_pda, is_signer=False, is_writable=False),
-                    AccountMeta(voter_ata, is_signer=False, is_writable=False),
-                    AccountMeta(self.sbt_mint_pda, is_signer=False, is_writable=False),
-                    AccountMeta(TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),
-                ],
-            )
-            send_and_confirm(self.client, self.admin, [ix], additional_signers=[voter])
-
-        must_fail(cast_should_fail, "InsufficientTokenBalance")
-
-        # Now reduce min_token_balance to 1 and vote should succeed.
-        enable_ix2 = Instruction(
-            PROGRAM_ID,
-            get_discriminator("enable_token_voting") + struct.pack("<Q", 1),
-            [
-                AccountMeta(self.admin.pubkey(), is_signer=True, is_writable=True),
-                AccountMeta(self.election_pda, is_signer=False, is_writable=False),
-                AccountMeta(self.config_pda, is_signer=False, is_writable=True),
-                AccountMeta(self.sbt_mint_pda, is_signer=False, is_writable=False),
-                AccountMeta(SYS_PROGRAM_ID, is_signer=False, is_writable=False),
-            ],
-        )
-        send_and_confirm(self.client, self.admin, [enable_ix2])
-
-        ix_ok = Instruction(
-            PROGRAM_ID,
-            get_discriminator("cast_vote_with_token") + pack_string("Alice"),
-            [
-                AccountMeta(voter.pubkey(), is_signer=True, is_writable=True),
-                AccountMeta(self.election_pda, is_signer=False, is_writable=False),
-                AccountMeta(self.config_pda, is_signer=False, is_writable=False),
-                AccountMeta(voter_ata, is_signer=False, is_writable=False),
-                AccountMeta(self.sbt_mint_pda, is_signer=False, is_writable=False),
-                AccountMeta(TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),
-            ],
-        )
-        sig = send_and_confirm(self.client, self.admin, [ix_ok], additional_signers=[voter])
-        self.assertTrue(sig)
+    def test_05_delegate_vote_blocks_direct_vote(self):
+        title = f"UnitTestDel_{int(time.time() * 1000)}"
+        start = cluster_time(self.client) + START_DELAY
+        init = ElectionInit(self.client, self.admin, title, start, start + 600, [Candidate("Alice"), Candidate("Bob")])
+        cfg = (get_discriminator("set_election_config") + struct.pack("<Q", 1) + struct.pack("<B", 40)
+               + struct.pack("<B", 2) + struct.pack("<Q", 0) + struct.pack("<?", True))  # allow_delegation = True
+        send_and_confirm(self.client, [Instruction(PROGRAM_ID, cfg, [
+            AccountMeta(self.admin.pubkey(), True, False), AccountMeta(init.election, False, False),
+            AccountMeta(config_pda(init.election), False, True)])], [self.admin], self.admin, label="set_election_config")
+        a, b = Voter(), Voter()
+        for v in (a, b):
+            self.assertTrue(v.send_and_confirm(self.client, v.register_voter(self.admin.pubkey(), title, 1), self.admin, self.admin, "register"))
+        delegate = Instruction(PROGRAM_ID, get_discriminator("delegate_vote"), [
+            AccountMeta(a.pubkey, True, False),
+            AccountMeta(init.election, False, False),
+            AccountMeta(config_pda(init.election), False, False),
+            AccountMeta(voter_registry_pda(init.election, a.pubkey), False, True),
+            AccountMeta(voter_registry_pda(init.election, b.pubkey), False, False),
+        ])
+        self.assertTrue(send_and_confirm(self.client, [delegate], [self.admin, a.keypair], self.admin, label="delegate_vote"))
+        wait_for_cluster_time(self.client, start + 2)
+        self.assertIsNone(self.cast(a, init.candidates[0], title))  # CannotVoteIfDelegated
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-

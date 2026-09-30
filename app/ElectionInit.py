@@ -1,82 +1,75 @@
 import struct
-from solders.pubkey import Pubkey
+
+from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
-from solders.instruction import Instruction, AccountMeta
-from solders.system_program import ID as SYS_PROGRAM_ID
-from solders.sysvar import RENT
-from solana.rpc.api import Client
-from solders.transaction import Transaction
-from solders.message import Message
+from solders.pubkey import Pubkey
+
 from utils import (
-    get_discriminator, derive_pda, pack_string,
-    TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+    PROGRAM_ID, RENT_SYSVAR, SYS_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
+    config_pda, election_pda, explorer, get_discriminator, mint_pda, outcome_pda,
+    pack_string, send_and_confirm,
 )
 
-#The actual election is run on the blockchain, so I'll call this class the Election Initializer
-class ElectionInit():
-    def __init__(self, program_id, client, admin_keypair, title, start_ts, end_ts, voters, weights, candidates):
-        self.program_id = program_id
-        self.admin_keypair = admin_keypair
+
+class ElectionInit:
+    """Creates an election on-chain: initialize_election, then one add_outcome per candidate.
+
+    Each step is its own transaction (mirrors the TypeScript demo and keeps every tx small).
+    Voters are registered afterwards with Voter.register_voter(). Raises RuntimeError on failure.
+    """
+
+    def __init__(self, client, admin: Keypair, title: str, start_ts: int, end_ts: int, candidates, program_id: Pubkey = None):
+        self.program_id = program_id or PROGRAM_ID
+        self.client = client
+        self.admin = admin
         self.title = title
         self.start_ts = start_ts
         self.end_ts = end_ts
-        self.voters = voters
         self.candidates = candidates
 
-        # 1. Find Addresses (PDAs)
-        election_pda = derive_pda(program_id, [b"election", bytes(admin_keypair.pubkey()), title.encode()])
-        mint_pda = derive_pda(program_id, [b"mint", bytes(election_pda)])
-        config_pda = derive_pda(program_id, [b"config", bytes(election_pda)])
-        
-        # 2. Pack Data
-        # Discriminator + Title (String) + Start (i64) + End (i64)
-        # <qq means "Little Endian, Signed Long Long (8 bytes)" x 2
-        ix_data = get_discriminator("initialize_election") + pack_string(title) + struct.pack("<qq", start_ts, end_ts)
-        
-        # 3. Define Accounts (Must match lib.rs EXACTLY)
-        accounts = [
-            AccountMeta(pubkey=admin_keypair.pubkey(), is_signer=True, is_writable=True),
-            AccountMeta(pubkey=election_pda, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=config_pda, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=mint_pda, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=SYS_PROGRAM_ID, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=TOKEN_2022_PROGRAM_ID, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=RENT, is_signer=False, is_writable=False),
+        self.election = election_pda(admin.pubkey(), title, self.program_id)
+        self.config = config_pda(self.election, self.program_id)
+        self.mint = mint_pda(self.election, self.program_id)
+
+        self._initialize()
+        for i, cand in enumerate(candidates):
+            self._add_outcome(cand, i)
+
+    # initialize_election(title: string, start_time: i64, end_time: i64)
+    def _initialize(self):
+        data = get_discriminator("initialize_election") + pack_string(self.title) + struct.pack("<qq", self.start_ts, self.end_ts)
+        accounts = [  # order = IDL: authority, election, election_config, sbt_mint, system_program, token_program, rent
+            AccountMeta(self.admin.pubkey(), True, True),
+            AccountMeta(self.election, False, True),
+            AccountMeta(self.config, False, True),
+            AccountMeta(self.mint, False, True),
+            AccountMeta(SYS_PROGRAM_ID, False, False),
+            AccountMeta(TOKEN_2022_PROGRAM_ID, False, False),
+            AccountMeta(RENT_SYSVAR, False, False),
         ]
+        sig = send_and_confirm(self.client, [Instruction(self.program_id, data, accounts)], [self.admin], self.admin,
+                               label="initialize_election")
+        if not sig:
+            raise RuntimeError("initialize_election failed (see message above).")
+        print("✅ Election created (Election + ElectionConfig + Token-2022 SBT mint PDAs)")
+        print(f"   Election PDA : {self.election}")
+        print(f"   SBT mint PDA : {self.mint}")
+        print(f"🔗 {explorer(sig)}")
 
-        ix = []
-        ix.append(Instruction(program_id, ix_data, accounts))
-
-        for i, voter in enumerate(voters):
-            ix.append(voter.register_voter(program_id, admin_keypair.pubkey(), voter.keypair.pubkey(), title, weights[i]))
-
-        tx_signature = self.send_and_confirm(client, admin_keypair, ix)
-        if not tx_signature:
-            raise RuntimeError("InitializeElection transaction failed (no signature returned).")
-        
-        
-    
-        # 3. Create the link
-        explorer_link = f"https://explorer.solana.com/tx/{tx_signature}?cluster=devnet"
-        
-        print(f"✅ Election Successfully Initialized!")
-        print(f"🔗 Proof: {explorer_link}")
-
-
-    def send_and_confirm(self, client, keypair, instructions):
-        """Signs and sends a transaction"""
-        payer = keypair.pubkey()
-        print(f"📦 Packaging {len(instructions)} instruction(s)...")
-        
-        latest_blockhash = client.get_latest_blockhash().value.blockhash
-        msg = Message(instructions, payer)
-        tx = Transaction([keypair], msg, latest_blockhash)
-        
-        print("🚀 Sending transaction...")
-        try:
-            signature = client.send_transaction(tx)
-            print(f"✅ Success! Tx: https://explorer.solana.com/tx/{signature.value}?cluster=devnet")
-            return signature.value
-        except Exception as e:
-            print(f"❌ Error: {e}")
-            return None
+    # add_outcome(label: string, outcome_index: u8) — indexes must be added in order 0,1,2,... before start_time
+    def _add_outcome(self, cand, index: int):
+        cand.index = index
+        outcome = outcome_pda(self.election, index, self.program_id)
+        data = get_discriminator("add_outcome") + pack_string(cand.name) + struct.pack("<B", index)
+        accounts = [  # authority, election, outcome, system_program
+            AccountMeta(self.admin.pubkey(), True, True),
+            AccountMeta(self.election, False, True),
+            AccountMeta(outcome, False, True),
+            AccountMeta(SYS_PROGRAM_ID, False, False),
+        ]
+        sig = send_and_confirm(self.client, [Instruction(self.program_id, data, accounts)], [self.admin], self.admin,
+                               label=f"add_outcome[{index}]")
+        if not sig:
+            raise RuntimeError(f"add_outcome failed for candidate #{index} '{cand.name}'. "
+                               "Outcomes must be added before the election start time.")
+        print(f"   ➕ Outcome {index}: {cand.name}")
