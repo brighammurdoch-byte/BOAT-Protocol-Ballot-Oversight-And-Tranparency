@@ -19,6 +19,7 @@ from solders.keypair import Keypair
 from Candidate import Candidate
 from ElectionInit import ElectionInit
 from Voter import Voter
+import utils
 from utils import (
     PROGRAM_ID, RPC_URL, config_pda, ensure_funds, fetch_election, get_admin_keypair, get_discriminator,
     send_and_confirm, tally_from_chain, voter_registry_pda, wait_for_cluster_time, cluster_time,
@@ -74,7 +75,7 @@ class BoatContractTests(unittest.TestCase):
         self.assertTrue(self.cast(voter, alice, title))
         _, _, tally, _ = tally_from_chain(self.client, init.election, [voter.pubkey])
         self.assertEqual(tally, {"Alice": 1, "Bob": 0})
-        self.assertTrue(self.cast(voter, bob, title))  # change vote (max_free_vote_changes default = 2)
+        self.assertTrue(self.cast(voter, bob, title))  # change vote (default max_free_vote_changes = 2; the cap only bites when price_per_vote_change > 0)
         _, _, tally, regs = tally_from_chain(self.client, init.election, [voter.pubkey])
         self.assertEqual(tally, {"Alice": 0, "Bob": 1})
         self.assertEqual(regs[0].vote_changes_used, 1)
@@ -86,6 +87,7 @@ class BoatContractTests(unittest.TestCase):
         # fund-less stranger: the admin pays fees; the transaction must fail because there is no registry/token account
         sig = self.cast(stranger, alice, title)
         self.assertIsNone(sig)
+        self.assertIn("AccountNotInitialized", utils.LAST_ERROR)  # not just "some failure" (RPC hiccup, etc.)
 
     def test_05_delegate_vote_blocks_direct_vote(self):
         title = f"UnitTestDel_{int(time.time() * 1000)}"
@@ -108,7 +110,8 @@ class BoatContractTests(unittest.TestCase):
         ])
         self.assertTrue(send_and_confirm(self.client, [delegate], [self.admin, a.keypair], self.admin, label="delegate_vote"))
         wait_for_cluster_time(self.client, start + 2)
-        self.assertIsNone(self.cast(a, init.candidates[0], title))  # CannotVoteIfDelegated
+        self.assertIsNone(self.cast(a, init.candidates[0], title))
+        self.assertIn("CannotVoteIfDelegated", utils.LAST_ERROR)
 
 
 if __name__ == "__main__":

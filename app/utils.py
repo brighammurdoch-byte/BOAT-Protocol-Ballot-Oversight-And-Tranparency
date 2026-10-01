@@ -208,15 +208,21 @@ def ensure_funds(client: Client, pubkey: Pubkey, min_sol: float, airdrop_sol: fl
 
 
 # --------------------------------------------------------------------------- transactions
+LAST_ERROR = ""  # text of the most recent send_and_confirm failure ("" after a success); lets tests assert the exact error
+
+
 def send_and_confirm(client: Client, instructions, signers, payer: Keypair, timeout: int = 60, label: str = ""):
     """Sign with `signers` (must include payer), send, and wait for `confirmed`. Returns signature or None."""
+    global LAST_ERROR
+    LAST_ERROR = ""
     try:
         blockhash = client.get_latest_blockhash(Confirmed).value.blockhash
         msg = Message(list(instructions), payer.pubkey())
         tx = Transaction(list(signers), msg, blockhash)
         sig = client.send_transaction(tx, opts=TxOpts(skip_preflight=False, preflight_commitment=Confirmed)).value
     except Exception as e:
-        print(f"❌ {label or 'Transaction'} rejected: {describe_error(e)}")
+        LAST_ERROR = describe_error(e)
+        print(f"❌ {label or 'Transaction'} rejected: {LAST_ERROR}")
         return None
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -224,6 +230,7 @@ def send_and_confirm(client: Client, instructions, signers, payer: Keypair, time
             st = client.get_signature_statuses([sig]).value[0]
             if st is not None:
                 if st.err is not None:
+                    LAST_ERROR = str(st.err)
                     print(f"❌ {label or 'Transaction'} failed on-chain: {st.err}")
                     return None
                 if st.confirmation_status is not None and str(st.confirmation_status).lower().endswith(("confirmed", "finalized")):
