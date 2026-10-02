@@ -28,8 +28,8 @@ All 8 requested features have been fully implemented in [lib.rs](programs/boat_f
 - **Config**: 
   - `max_free_vote_changes` (default: 2)
   - `price_per_vote_change` (default: 0)
-- **Behavior**: After free changes exhausted, voter pays to change vote
-- **Payment**: SOL transferred from voter → authority
+- **Behavior**: After free changes are used, a non-zero `price_per_vote_change` charges that fee. A price of 0 rejects further changes (`VoteChangeLimitReached`); it does not allow unlimited changes.
+- **Payment**: SOL transferred from voter → `election.authority` (`fee_receiver` must be that address)
 
 ### ✅ 5. Administrator-Paid Fees
 - **What**: Election creator sponsors voter transaction costs
@@ -65,7 +65,7 @@ All 8 requested features have been fully implemented in [lib.rs](programs/boat_f
   - `default_voter_weight: 1` (equal voting)
   - `quorum_percentage: 33` (standard business quorum)
   - `max_free_vote_changes: 2` (allows reconsideration)
-  - `price_per_vote_change: 0` (free changes)
+  - `price_per_vote_change: 0` (changes past `max_free_vote_changes` are rejected)
   - `allow_delegation: true` (flexible voting)
   - `allow_token_voting: false` (opt-in for DAOs)
 - **Functions**:
@@ -160,8 +160,8 @@ pub struct VoteCast {
 
 6. **`cast_vote(candidate)`**
    - Votes with whitelisted weight
-   - Supports unlimited vote changes
-   - Free changes up to limit, then paid
+   - Free changes up to `max_free_vote_changes`, then paid if `price_per_vote_change > 0`
+   - Further changes are rejected when that price is 0 (`VoteChangeLimitReached`)
 
 7. **`cast_vote_with_token(candidate)`**
    - Votes with token holdings

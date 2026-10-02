@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ScrollView, Text, TextInput, Pressable, StyleSheet } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { PublicKey } from "@solana/web3.js";
-import { castVote } from "@boat/sdk";
+import { castVote, fetchElection } from "@boat/sdk";
 import { parsePubkeyOrNull, withMobileWallet } from "../lib/solana";
 
 export default function VoteScreen() {
@@ -10,16 +10,11 @@ export default function VoteScreen() {
   const { election } = useLocalSearchParams<{ election?: string }>();
   const [electionStr, setElectionStr] = useState(election ?? "");
   const [outcomeIndexStr, setOutcomeIndexStr] = useState("0");
-  const [feeReceiverStr, setFeeReceiverStr] = useState(""); // optional
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const electionKeyOrNull = useMemo(() => parsePubkeyOrNull(electionStr), [electionStr]);
-  const feeReceiverOrNull = useMemo(
-    () => (feeReceiverStr.trim() ? parsePubkeyOrNull(feeReceiverStr) : null),
-    [feeReceiverStr]
-  );
 
   const submit = useCallback(async () => {
     setErr(null);
@@ -33,8 +28,10 @@ export default function VoteScreen() {
         throw new Error("Outcome index must be 0-255.");
       }
 
-      const out = await withMobileWallet(async ({ connection, wallet, publicKey }) => {
-        const feeReceiver = feeReceiverOrNull ?? publicKey;
+      const out = await withMobileWallet(async ({ connection, wallet }) => {
+        const { election: onChain } = await fetchElection(connection, electionKey, wallet);
+        // Paid vote changes go to the election authority. Any other fee receiver is rejected.
+        const feeReceiver = new PublicKey(onChain.authority);
         return await castVote(connection, wallet, electionKey, outcomeIndex, feeReceiver);
       });
 
@@ -44,7 +41,7 @@ export default function VoteScreen() {
     } finally {
       setBusy(false);
     }
-  }, [electionKeyOrNull, feeReceiverOrNull, outcomeIndexStr]);
+  }, [electionKeyOrNull, outcomeIndexStr]);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -71,15 +68,9 @@ export default function VoteScreen() {
         onChangeText={setOutcomeIndexStr}
       />
 
-      <Text style={styles.label}>Fee receiver (optional)</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Defaults to your wallet"
-        placeholderTextColor="#64748b"
-        value={feeReceiverStr}
-        onChangeText={setFeeReceiverStr}
-        autoCapitalize="none"
-      />
+      <Text style={styles.sub}>
+        Vote-change fees, when the election charges them, are paid to the election authority.
+      </Text>
 
       <Pressable style={styles.btn} disabled={busy || !electionKeyOrNull} onPress={submit}>
         <Text style={styles.btnText}>{busy ? "Submitting…" : "Cast vote"}</Text>

@@ -153,7 +153,7 @@ async function main() {
     .castVote(0)
     .accounts({
       voter: voter.publicKey,
-      feeReceiver: voter.publicKey,
+      feeReceiver: authority.publicKey,
       election,
         electionConfig,
         privateConfig: null,

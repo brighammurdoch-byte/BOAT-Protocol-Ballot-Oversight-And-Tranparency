@@ -120,7 +120,7 @@ New Model: cast_vote() → event emit → off-chain indexing
 
 **Rationale**:
 - ✅ Saves ~20,000 compute units per vote (major gas savings)
-- ✅ Allows unlimited vote changes (burning makes changes expensive)
+- ✅ Vote changes stay cheap to record (burning made every change expensive). Unpaid changes still stop at `max_free_vote_changes`.
 - ✅ Events are immutable audit trail
 - ✅ Tallying deterministic from events (no on-chain state)
 
@@ -137,8 +137,10 @@ New Model: cast_vote() → event emit → off-chain indexing
 
 **Design**: 
 ```
-First N changes: Free
-Changes N+1 onwards: Must pay fee in SOL
+First N changes: Free (N = max_free_vote_changes)
+Changes N+1 onwards, price > 0: Must pay fee in SOL to election.authority
+Changes N+1 onwards, price == 0: Rejected (VoteChangeLimitReached)
+fee_receiver must equal election.authority
 ```
 
 **Rationale**:
@@ -194,7 +196,7 @@ pub struct ElectionConfig {
     default_voter_weight: u64,      // 1
     quorum_percentage: u8,          // 33%
     max_free_vote_changes: u8,      // 2
-    price_per_vote_change: u64,     // 0 (free)
+    price_per_vote_change: u64,     // 0 (reject changes past the free cap)
     allow_delegation: bool,         // true
     allow_token_voting: bool,       // false
 }

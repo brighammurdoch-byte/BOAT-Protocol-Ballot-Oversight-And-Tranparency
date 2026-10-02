@@ -135,21 +135,23 @@ describe("boat_final USU MVP", () => {
       program.programId
     );
 
+    const castAccounts = (outcome: PublicKey, feeReceiver: PublicKey) => ({
+      voter: voter.publicKey,
+      feeReceiver,
+      election,
+      electionConfig,
+      privateConfig: null,
+      sbtMint,
+      voterRegistry,
+      voterTokenAccount: voterAta,
+      outcome,
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    });
+
     await program.methods
       .castVote(0)
-      .accounts({
-        voter: voter.publicKey,
-        feeReceiver: voter.publicKey,
-        election,
-        electionConfig,
-        privateConfig: null,
-        sbtMint,
-        voterRegistry,
-        voterTokenAccount: voterAta,
-        outcome: outcome0,
-        tokenProgram: TOKEN_2022_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-      })
+      .accounts(castAccounts(outcome0, authority.publicKey))
       .signers([voter])
       .rpc();
 
@@ -161,26 +163,84 @@ describe("boat_final USU MVP", () => {
       [Buffer.from("outcome"), election.toBuffer(), Buffer.from([1])],
       program.programId
     );
+
+    // A voter cannot name themselves (or anyone else) as fee_receiver.
+    try {
+      await program.methods
+        .castVote(1)
+        .accounts(castAccounts(outcome1, voter.publicKey))
+        .signers([voter])
+        .rpc();
+      assert.fail("fee_receiver other than the authority should be rejected");
+    } catch (e: any) {
+      const text = `${e?.error?.errorCode?.code ?? ""} ${e}`;
+      assert.include(text, "InvalidFeeReceiver");
+    }
+    const unchanged: any = await program.account.voterRegistry.fetch(voterRegistry);
+    assert.equal(unchanged.currentVote, "Alice");
+    assert.equal(unchanged.voteChangesUsed, 0);
+
     await program.methods
       .castVote(1)
-      .accounts({
-        voter: voter.publicKey,
-        feeReceiver: voter.publicKey,
-        election,
-        electionConfig,
-        privateConfig: null,
-        sbtMint,
-        voterRegistry,
-        voterTokenAccount: voterAta,
-        outcome: outcome1,
-        tokenProgram: TOKEN_2022_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-      })
+      .accounts(castAccounts(outcome1, authority.publicKey))
       .signers([voter])
       .rpc();
 
     const reg2: any = await program.account.voterRegistry.fetch(voterRegistry);
     assert.equal(reg2.currentVote, "Bob");
     assert.equal(reg2.voteChangesUsed, 1);
+  });
+
+  it("rejects vote changes past max_free_vote_changes when price is 0", async () => {
+    // Continues the shared election: config is max_free_vote_changes=2, price=0,
+    // and the voter has already used 1 of 2 free changes.
+    const [voterRegistry] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("voter_registry"),
+        election.toBuffer(),
+        voter.publicKey.toBuffer(),
+      ],
+      program.programId
+    );
+    const voterAta = getAssociatedTokenAddressSync(
+      sbtMint,
+      voter.publicKey,
+      false,
+      TOKEN_2022_PROGRAM_ID
+    );
+    const outcomeAt = (index: number) =>
+      PublicKey.findProgramAddressSync(
+        [Buffer.from("outcome"), election.toBuffer(), Buffer.from([index])],
+        program.programId
+      )[0];
+    const accounts = (index: number) => ({
+      voter: voter.publicKey,
+      feeReceiver: authority.publicKey,
+      election,
+      electionConfig,
+      privateConfig: null,
+      sbtMint,
+      voterRegistry,
+      voterTokenAccount: voterAta,
+      outcome: outcomeAt(index),
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    });
+
+    await program.methods.castVote(0).accounts(accounts(0)).signers([voter]).rpc();
+    const afterSecond: any = await program.account.voterRegistry.fetch(voterRegistry);
+    assert.equal(afterSecond.voteChangesUsed, 2);
+    assert.equal(afterSecond.currentVote, "Alice");
+
+    try {
+      await program.methods.castVote(1).accounts(accounts(1)).signers([voter]).rpc();
+      assert.fail("price 0 must reject changes past max_free_vote_changes");
+    } catch (e: any) {
+      const text = `${e?.error?.errorCode?.code ?? ""} ${e}`;
+      assert.include(text, "VoteChangeLimitReached");
+    }
+    const capped: any = await program.account.voterRegistry.fetch(voterRegistry);
+    assert.equal(capped.voteChangesUsed, 2);
+    assert.equal(capped.currentVote, "Alice");
   });
 });

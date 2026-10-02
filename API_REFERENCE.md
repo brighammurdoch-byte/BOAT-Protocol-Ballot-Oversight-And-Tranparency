@@ -23,7 +23,7 @@ Creates a new election with default configuration.
 - `default_voter_weight: 1`
 - `quorum_percentage: 33`
 - `max_free_vote_changes: 2`
-- `price_per_vote_change: 0`
+- `price_per_vote_change: 0` (changes past `max_free_vote_changes` are rejected)
 - `allow_delegation: true`
 - `allow_token_voting: false`
 
@@ -58,7 +58,7 @@ Updates election configuration **before voting starts**.
 - `default_voter_weight: u64` - Default votes per voter if not specified
 - `quorum_percentage: u8` - Required participation (1-100)
 - `max_free_vote_changes: u8` - Number of free vote changes
-- `price_per_vote_change: u64` - Fee in lamports for additional changes
+- `price_per_vote_change: u64` - Fee in lamports for changes past `max_free_vote_changes`. `0` rejects those changes (`VoteChangeLimitReached`) instead of making them free.
 - `allow_delegation: bool` - Whether voting can be delegated
 
 **Accounts Needed:**
@@ -187,7 +187,7 @@ Submits a vote for a candidate. Supports vote changes up to configured limit.
 
 **Accounts Needed:**
 - `voter` (signer)
-- `fee_receiver` (where paid change fees go)
+- `fee_receiver` (must be `election.authority`; paid change fees are transferred here)
 - `election`
 - `election_config`
 - `sbt_mint`
@@ -203,6 +203,7 @@ Submits a vote for a candidate. Supports vote changes up to configured limit.
 - Voter must be whitelisted
 - Voter must not have delegated their vote
 - Voter must have voting tokens
+- `fee_receiver` must be `election.authority` (`InvalidFeeReceiver` otherwise). The voter cannot name their own wallet and keep the fee.
 
 **Behavior on First Vote:**
 - Sets `has_voted: true`
@@ -210,20 +211,25 @@ Submits a vote for a candidate. Supports vote changes up to configured limit.
 - Emits `VoteCast` event with `vote_change_number: 0`
 
 **Behavior on Vote Change:**
-- If changes < `max_free_vote_changes`: No fee (free)
-- If changes >= `max_free_vote_changes`: Must pay fee (if > 0)
+- If `vote_changes_used < max_free_vote_changes`: no fee
+- If `vote_changes_used >= max_free_vote_changes` and `price_per_vote_change > 0`: pay that price to `election.authority`
+- If `vote_changes_used >= max_free_vote_changes` and `price_per_vote_change == 0`: rejected with `VoteChangeLimitReached` (the cap applies even when the price is 0; a zero price does not mean unlimited changes)
 - Updates `current_vote` to new candidate
 - Increments `vote_changes_used`
 - Emits new `VoteCast` event
+
+Default config is `max_free_vote_changes = 2` and `price_per_vote_change = 0`, so a voter may change their vote twice and the third change fails.
 
 **Payment Logic:**
 ```javascript
 if (voter_registry.has_voted) {
     if (voter_registry.vote_changes_used >= config.max_free_vote_changes) {
-        if (config.price_per_vote_change > 0) {
-            voter.lamports -= config.price_per_vote_change;
-            fee_receiver.lamports += config.price_per_vote_change;
+        if (config.price_per_vote_change == 0) {
+            throw "VoteChangeLimitReached";
         }
+        // fee_receiver is constrained to election.authority
+        voter.lamports -= config.price_per_vote_change;
+        fee_receiver.lamports += config.price_per_vote_change;
     }
     voter_registry.vote_changes_used += 1;
 }
@@ -254,7 +260,8 @@ await program.methods
   })
   .rpc();
 
-// Third vote (PAID - costs 0.005 SOL)
+// Third change. Paid only when price_per_vote_change > 0 (for example 0.005 SOL
+// sent to the authority). When that price is 0, this call fails with VoteChangeLimitReached.
 await program.methods
   .castVote("Alice")
   .accounts({

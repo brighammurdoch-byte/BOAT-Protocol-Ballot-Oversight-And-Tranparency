@@ -46,6 +46,8 @@ pub mod boat_final {
         config.default_voter_weight = 1;
         config.quorum_percentage = 33;
         config.max_free_vote_changes = 2;
+        // 0 does not mean unlimited changes: past max_free_vote_changes, cast_vote
+        // returns VoteChangeLimitReached until a non-zero price is configured.
         config.price_per_vote_change = 0;
         config.allow_delegation = false;
         config.registration_mode = REGISTRATION_AUTHORITY_ONLY;
@@ -236,11 +238,16 @@ pub mod boat_final {
         require!(user_weight > 0, ErrorCode::NoVotingPower);
         require!(user_weight == voter_registry.weight, ErrorCode::WeightMismatch);
 
+        // A repeat cast is a vote change. `max_free_vote_changes` always caps unpaid
+        // changes, including when `price_per_vote_change` is 0:
+        //   * price > 0: each change past the free count pays that price to the authority
+        //   * price == 0: each change past the free count is rejected
         if voter_registry.has_voted {
             let config = &ctx.accounts.election_config;
-            if voter_registry.vote_changes_used >= config.max_free_vote_changes
-                && config.price_per_vote_change > 0
-            {
+            if voter_registry.vote_changes_used >= config.max_free_vote_changes {
+                if config.price_per_vote_change == 0 {
+                    return err!(ErrorCode::VoteChangeLimitReached);
+                }
                 let cpi_context = CpiContext::new(
                     ctx.accounts.system_program.key(),
                     anchor_lang::system_program::Transfer {
@@ -633,8 +640,12 @@ pub struct CastVote<'info> {
     #[account(mut)]
     pub voter: Signer<'info>,
 
-    /// CHECK: receives optional vote-change fee (may be the voter)
-    #[account(mut)]
+    /// Vote-change fees are paid only to the election authority.
+    /// CHECK: address is constrained to `election.authority` (a wallet, not a program account).
+    #[account(
+        mut,
+        address = election.authority @ ErrorCode::InvalidFeeReceiver
+    )]
     pub fee_receiver: UncheckedAccount<'info>,
 
     pub election: Account<'info, Election>,
@@ -813,4 +824,8 @@ pub enum ErrorCode {
     ElectionIdMismatch,
     #[msg("Production Groth16 verifier is not configured (ceremony VK missing).")]
     ZkVerifierNotConfigured,
+    #[msg("Vote-change fee must be paid to the election authority.")]
+    InvalidFeeReceiver,
+    #[msg("Vote change limit reached.")]
+    VoteChangeLimitReached,
 }

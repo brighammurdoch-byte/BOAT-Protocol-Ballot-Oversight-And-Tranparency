@@ -25,7 +25,7 @@ This is **not** a DAO governance protocol. Token-weighted / corporate voting sur
 
 ## Status
 
-Transparent MVP: authority registration, outcomes, cast/change vote, client-side tally, web + API + mobile.
+Transparent MVP: authority registration, outcomes, cast/change vote, client-side tally, web + API + mobile. Vote-change fees are paid only to `election.authority`. `max_free_vote_changes` is enforced even when `price_per_vote_change` is 0 (further changes are rejected; a non-zero price charges that fee instead).
 
 Private ballot v0: optional `enable_private_ballots` + `cast_vote_zk` (nullifier PDA + aggregate tallies). Transparent `cast_vote` remains the default. See [`docs/ZK_STATUS.md`](docs/ZK_STATUS.md).
 

@@ -44,15 +44,20 @@ class Voter:
         return Instruction(self.program_id, get_discriminator("register_voter") + struct.pack("<Q", weight), accounts)
 
     # ---- cast_vote(outcome_index: u8) — signed by the voter (also used to CHANGE a vote: just call again) ----
-    def cast_vote(self, admin_pubkey: Pubkey, candidate: Candidate, title: str) -> Instruction:
+    def cast_vote(
+        self, admin_pubkey: Pubkey, candidate: Candidate, title: str, fee_receiver: Pubkey | None = None
+    ) -> Instruction:
         if not isinstance(candidate, Candidate) or candidate.index is None:
             raise ValueError("cast_vote needs a Candidate that was added on-chain (candidate.index is set by ElectionInit).")
         election = election_pda(admin_pubkey, title, self.program_id)
         mint = mint_pda(election, self.program_id)
+        # fee_receiver must be the election authority. Anything else is rejected on-chain
+        # (InvalidFeeReceiver), including the voter's own wallet.
+        receiver = fee_receiver or admin_pubkey
         accounts = [  # voter, fee_receiver, election, election_config, private_config(optional), sbt_mint,
                       # voter_registry, voter_token_account, outcome, token_program, system_program
             AccountMeta(self.pubkey, True, True),
-            AccountMeta(admin_pubkey, False, True),  # fee_receiver: only paid if a vote change has a price (default 0)
+            AccountMeta(receiver, False, True),
             AccountMeta(election, False, False),
             AccountMeta(config_pda(election, self.program_id), False, False),
             AccountMeta(self.program_id, False, False),  # Anchor convention: optional account = None → pass program ID

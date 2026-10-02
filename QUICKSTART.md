@@ -69,7 +69,7 @@ await program.methods
   .registerVoter(new anchor.BN(100))  // 100 votes
   .rpc();
 
-// Cast vote (with unlimited changes, first 2 free)
+// Cast vote (first max_free_vote_changes changes are free; price 0 rejects the rest)
 await program.methods
   .castVote("Candidate A")
   .rpc();
@@ -162,7 +162,7 @@ await program.methods
     new anchor.BN(1),              // 1 vote each
     33,                            // 33% quorum
     5,                             // 5 free changes
-    new anchor.BN(0),              // Free (no payment)
+    new anchor.BN(0),              // price 0: reject changes past the free cap
     true                           // Delegation allowed
   )
   .rpc();
