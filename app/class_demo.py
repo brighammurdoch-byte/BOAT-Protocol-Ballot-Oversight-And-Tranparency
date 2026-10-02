@@ -109,7 +109,7 @@ def main():
 
     tally, _ = print_tally(client, init.election, voters, candidates, "TALLY AFTER FIRST VOTES (read from on-chain accounts)")
 
-    pause("Step 4: A voter changes their mind (cast_vote again; extra changes cost price_per_vote_change once max_free_vote_changes is used up — default price is 0, i.e. unlimited)")
+    pause("Step 4: A voter changes their mind (cast_vote again). The first max_free_vote_changes changes are free (default 2). Further changes cost price_per_vote_change when that price is > 0, and are rejected when the price is 0.")
     for i in range(min(1, len(voters))):  # one change keeps the before/after tally difference easy to see
         options = [c for c in candidates if c is not choices[i]]
         new_choice = rng.choice(options)

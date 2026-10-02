@@ -75,7 +75,7 @@ class BoatContractTests(unittest.TestCase):
         self.assertTrue(self.cast(voter, alice, title))
         _, _, tally, _ = tally_from_chain(self.client, init.election, [voter.pubkey])
         self.assertEqual(tally, {"Alice": 1, "Bob": 0})
-        self.assertTrue(self.cast(voter, bob, title))  # change vote (default max_free_vote_changes = 2; the cap only bites when price_per_vote_change > 0)
+        self.assertTrue(self.cast(voter, bob, title))  # one free change (default max_free_vote_changes = 2; price 0 still caps later changes)
         _, _, tally, regs = tally_from_chain(self.client, init.election, [voter.pubkey])
         self.assertEqual(tally, {"Alice": 0, "Bob": 1})
         self.assertEqual(regs[0].vote_changes_used, 1)
@@ -112,6 +112,35 @@ class BoatContractTests(unittest.TestCase):
         wait_for_cluster_time(self.client, start + 2)
         self.assertIsNone(self.cast(a, init.candidates[0], title))
         self.assertIn("CannotVoteIfDelegated", utils.LAST_ERROR)
+
+    def test_06_fee_receiver_must_be_authority(self):
+        title, start, init, (alice, _), (voter,) = self.new_election()
+        wait_for_cluster_time(self.client, start + 2)
+        # Naming the voter (or anyone other than the election authority) must not skip the fee.
+        sig = voter.send_and_confirm(
+            self.client,
+            voter.cast_vote(self.admin.pubkey(), alice, title, fee_receiver=voter.pubkey),
+            voter.keypair,
+            self.admin,
+            "cast-bad-fee-receiver",
+        )
+        self.assertIsNone(sig)
+        self.assertIn("InvalidFeeReceiver", utils.LAST_ERROR)
+        self.assertTrue(self.cast(voter, alice, title))
+
+    def test_07_vote_change_cap_enforced_when_price_is_zero(self):
+        # initialize_election defaults: max_free_vote_changes = 2, price_per_vote_change = 0.
+        title, start, init, (alice, bob), (voter,) = self.new_election()
+        wait_for_cluster_time(self.client, start + 2)
+        self.assertTrue(self.cast(voter, alice, title))  # first vote
+        self.assertTrue(self.cast(voter, bob, title))    # free change 1
+        self.assertTrue(self.cast(voter, alice, title))  # free change 2
+        self.assertIsNone(self.cast(voter, bob, title))  # past the cap, price is 0 → reject
+        self.assertIn("VoteChangeLimitReached", utils.LAST_ERROR)
+        _, _, tally, regs = tally_from_chain(self.client, init.election, [voter.pubkey])
+        self.assertEqual(tally, {"Alice": 1, "Bob": 0})
+        self.assertEqual(regs[0].current_vote, "Alice")
+        self.assertEqual(regs[0].vote_changes_used, 2)
 
 
 if __name__ == "__main__":

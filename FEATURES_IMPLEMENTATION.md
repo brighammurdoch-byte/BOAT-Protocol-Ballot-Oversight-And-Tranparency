@@ -99,10 +99,11 @@ Voters get a limited number of free vote changes. Additional changes can be paid
   - `price_per_vote_change: u64` - Cost in lamports for additional changes
 
 - **Logic Flow**:
-  1. First vote: Free (changes_used = 0)
-  2. Change votes: Free until `max_free_vote_changes` reached
-  3. Additional changes: Must pay `price_per_vote_change` in SOL
-  4. Payment transferred to election authority
+  1. First vote: Free (`vote_changes_used` stays 0)
+  2. Changes while `vote_changes_used < max_free_vote_changes`: free
+  3. Further changes when `price_per_vote_change > 0`: pay that price in SOL to `election.authority`
+  4. Further changes when `price_per_vote_change == 0`: rejected with `VoteChangeLimitReached`
+  5. `fee_receiver` must be `election.authority` (`InvalidFeeReceiver` otherwise)
 
 ### Example Configuration
 ```
@@ -110,7 +111,10 @@ max_free_vote_changes = 2
 price_per_vote_change = 5_000_000 (0.005 SOL)
 
 Voter can change vote 2 times for free
-3rd change onwards: Must pay 0.005 SOL per change
+3rd change onwards: Must pay 0.005 SOL per change to the election authority
+
+price_per_vote_change = 0 (the initialize default)
+3rd change onwards: VoteChangeLimitReached (not unlimited)
 ```
 
 ---
@@ -123,16 +127,19 @@ The election creator sponsors all voter transaction fees. Voters don't pay for b
 ### Implementation
 - **PDA Design**: All PDAs are derived from `authority + election + voter`
 - **Authority Sponsorship**: Authority is set as `payer` in account initialization
-- **Fee Receiver Account**: Optional fee account parameter in `cast_vote()` for paid changes
+- **Fee Receiver Account**: `cast_vote()` still takes `fee_receiver`, and it must be `election.authority`. Paid vote-change SOL is transferred there. A voter cannot substitute their own wallet.
 
 ### Details
 ```rust
 pub struct CastVote<'info> {
     #[account(mut)]
     pub voter: Signer<'info>,
-    
-    /// CHECK: Fee receiver (election authority)
-    #[account(mut)]
+
+    /// CHECK: address constrained to election.authority
+    #[account(
+        mut,
+        address = election.authority @ ErrorCode::InvalidFeeReceiver
+    )]
     pub fee_receiver: UncheckedAccount<'info>,
     // ... other accounts
 }
@@ -191,8 +198,8 @@ Sensible defaults minimize configuration needs while allowing customization.
 ```rust
 config.default_voter_weight = 1;        // 1 vote per voter
 config.quorum_percentage = 33;          // 33% quorum
-config.max_free_vote_changes = 2;       // 2 free changes
-config.price_per_vote_change = 0;       // Free by default
+config.max_free_vote_changes = 2;       // 2 free changes, then stop
+config.price_per_vote_change = 0;       // 0 rejects changes past the free cap
 config.allow_delegation = true;         // Delegation enabled
 config.allow_token_voting = false;      // Disabled by default
 config.token_mint = None;

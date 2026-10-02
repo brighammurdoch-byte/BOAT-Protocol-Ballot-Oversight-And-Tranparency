@@ -476,6 +476,10 @@ export async function setElectionConfig(
   return { signature: sig };
 }
 
+/**
+ * `feeReceiver` must be the election authority. The program rejects any other
+ * address (`InvalidFeeReceiver`), so a voter cannot redirect the vote-change fee.
+ */
 export async function castVote(
   connection: Connection,
   wallet: AnchorWalletLike,

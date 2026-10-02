@@ -35,6 +35,7 @@ export default function VotePage() {
     start: number;
     end: number;
   } | null>(null);
+  const [authorityPk, setAuthorityPk] = useState<PublicKey | null>(null);
   const [privateMode, setPrivateMode] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [voterSecret, setVoterSecret] = useState("");
@@ -71,6 +72,7 @@ export default function VotePage() {
     setErr(null);
     setBusy(true);
     try {
+      setAuthorityPk(null);
       if (!election) {
         throw new Error("Paste a valid election PDA.");
       }
@@ -86,6 +88,7 @@ export default function VotePage() {
         start,
         end,
       });
+      setAuthorityPk(new PublicKey(e.authority));
       const list = await fetchOutcomes(
         connection,
         election,
@@ -161,12 +164,15 @@ export default function VotePage() {
         });
         setReceipt(explorerTxUrl(res.signature, "devnet"));
       } else {
+        if (!authorityPk) {
+          throw new Error("Load the election before voting. Fees go to the election authority.");
+        }
         const res = await castVote(
           connection,
           wallet as any,
           election,
           selected,
-          wallet.publicKey
+          authorityPk
         );
         setReceipt(explorerTxUrl(res.signature, "devnet"));
       }
@@ -184,6 +190,7 @@ export default function VotePage() {
     privateMode,
     voterSecret,
     electorateSecrets,
+    authorityPk,
   ]);
 
   return (

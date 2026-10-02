@@ -78,6 +78,9 @@
         },
         {
           "name": "fee_receiver",
+          "docs": [
+            "Vote-change fees are paid only to the election authority."
+          ],
           "writable": true
         },
         {
@@ -1112,6 +1115,16 @@
       "code": 6027,
       "name": "ZkVerifierNotConfigured",
       "msg": "Production Groth16 verifier is not configured (ceremony VK missing)."
+    },
+    {
+      "code": 6028,
+      "name": "InvalidFeeReceiver",
+      "msg": "Vote-change fee must be paid to the election authority."
+    },
+    {
+      "code": 6029,
+      "name": "VoteChangeLimitReached",
+      "msg": "Vote change limit reached."
     }
   ],
   "types": [
